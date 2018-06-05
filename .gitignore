@@ -14,7 +14,7 @@ logs
 logs/
 logs/*
 
-#*.pth
+*.pth
 
 # Distribution / packaging
 .Python
