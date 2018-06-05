@@ -14,7 +14,7 @@ from torch.autograd import Variable
 from torch.utils.data import DataLoader
 from torch import optim
 
-from Models.backbone import resnet, backbone
+from Models.backbone import backbone
 from Models.fpn import FPN
 from Models.lscnet import LSCNet
 from Layers.simple_net import SimpleNet
