@@ -10,6 +10,7 @@ import numpy as np
 import sys
 import os
 
+
 ###########################################
 ##
 ##########################################
@@ -17,10 +18,9 @@ import os
 
 def bbox_overlaps(anchors, gt_boxes):
     """
-    anchors: (N, 4) ndarray of float
-    gt_boxes: (K, 4) ndarray of float
-
-    overlaps: (N, K) ndarray of overlap between boxes and query_boxes
+    anchors: (N, 4) Tensor/Var of float
+    gt_boxes: (K, 4) Tensor/Var of float
+    overlaps: (N, K) Tensor/Var of overlap between boxes and query_boxes
     """
     N = anchors.size(0)
     K = gt_boxes.size(0)
@@ -54,12 +54,12 @@ def bbox_overlaps_batch(anchors, gt_boxes):
         anchors = anchors.view(1, N, 4).expand(batch_size, N, 4).contiguous()
         gt_boxes = gt_boxes[:, :, :4].contiguous()
 
-        gt_boxes_x = (gt_boxes[:,:,2] - gt_boxes[:,:,0] + 1)
-        gt_boxes_y = (gt_boxes[:,:,3] - gt_boxes[:,:,1] + 1)
+        gt_boxes_x = (gt_boxes[:, :, 2] - gt_boxes[:, :, 0] + 1)
+        gt_boxes_y = (gt_boxes[:, :, 3] - gt_boxes[:, :, 1] + 1)
         gt_boxes_area = (gt_boxes_x * gt_boxes_y).view(batch_size, 1, K)
 
-        anchors_boxes_x = (anchors[:,:,2] - anchors[:,:,0] + 1)
-        anchors_boxes_y = (anchors[:,:,3] - anchors[:,:,1] + 1)
+        anchors_boxes_x = (anchors[:, :, 2] - anchors[:, :, 0] + 1)
+        anchors_boxes_y = (anchors[:, :, 3] - anchors[:, :, 1] + 1)
         anchors_area = (anchors_boxes_x * anchors_boxes_y).view(batch_size, N, 1)
 
         gt_area_zero = (gt_boxes_x == 1) & (gt_boxes_y == 1)
@@ -68,10 +68,12 @@ def bbox_overlaps_batch(anchors, gt_boxes):
         boxes = anchors.view(batch_size, N, 1, 4).expand(batch_size, N, K, 4)
         query_boxes = gt_boxes.view(batch_size, 1, K, 4).expand(batch_size, N, K, 4)
 
-        iw = (torch.min(boxes[:, :, :, 2], query_boxes[:, :, :, 2]) - torch.max(boxes[:, :, :, 0], query_boxes[:, :, :, 0]) + 1)
+        iw = (torch.min(boxes[:, :, :, 2], query_boxes[:, :, :, 2]) - torch.max(boxes[:, :, :, 0],
+                                                                                query_boxes[:, :, :, 0]) + 1)
         iw[iw < 0] = 0
 
-        ih = (torch.min(boxes[:,:,:,3], query_boxes[:,:,:,3]) - torch.max(boxes[:,:,:,1], query_boxes[:,:,:,1]) + 1)
+        ih = (torch.min(boxes[:, :, :, 3], query_boxes[:, :, :, 3]) - torch.max(boxes[:, :, :, 1],
+                                                                                query_boxes[:, :, :, 1]) + 1)
         ih[ih < 0] = 0
         ua = anchors_area + gt_boxes_area - (iw * ih)
         overlaps = iw * ih / ua
@@ -85,18 +87,18 @@ def bbox_overlaps_batch(anchors, gt_boxes):
         K = gt_boxes.size(1)
 
         if anchors.size(2) == 4:
-            anchors = anchors[:,:,:4].contiguous()
+            anchors = anchors[:, :, :4].contiguous()
         else:
-            anchors = anchors[:,:,1:5].contiguous()
+            anchors = anchors[:, :, 1:5].contiguous()
 
-        gt_boxes = gt_boxes[:,:,:4].contiguous()
+        gt_boxes = gt_boxes[:, :, :4].contiguous()
 
-        gt_boxes_x = (gt_boxes[:,:,2] - gt_boxes[:,:,0] + 1)
-        gt_boxes_y = (gt_boxes[:,:,3] - gt_boxes[:,:,1] + 1)
+        gt_boxes_x = (gt_boxes[:, :, 2] - gt_boxes[:, :, 0] + 1)
+        gt_boxes_y = (gt_boxes[:, :, 3] - gt_boxes[:, :, 1] + 1)
         gt_boxes_area = (gt_boxes_x * gt_boxes_y).view(batch_size, 1, K)
 
-        anchors_boxes_x = (anchors[:,:,2] - anchors[:,:,0] + 1)
-        anchors_boxes_y = (anchors[:,:,3] - anchors[:,:,1] + 1)
+        anchors_boxes_x = (anchors[:, :, 2] - anchors[:, :, 0] + 1)
+        anchors_boxes_y = (anchors[:, :, 3] - anchors[:, :, 1] + 1)
         anchors_area = (anchors_boxes_x * anchors_boxes_y).view(batch_size, N, 1)
 
         gt_area_zero = (gt_boxes_x == 1) & (gt_boxes_y == 1)
@@ -105,12 +107,12 @@ def bbox_overlaps_batch(anchors, gt_boxes):
         boxes = anchors.view(batch_size, N, 1, 4).expand(batch_size, N, K, 4)
         query_boxes = gt_boxes.view(batch_size, 1, K, 4).expand(batch_size, N, K, 4)
 
-        iw = (torch.min(boxes[:,:,:,2], query_boxes[:,:,:,2]) -
-            torch.max(boxes[:,:,:,0], query_boxes[:,:,:,0]) + 1)
+        iw = (torch.min(boxes[:, :, :, 2], query_boxes[:, :, :, 2]) -
+              torch.max(boxes[:, :, :, 0], query_boxes[:, :, :, 0]) + 1)
         iw[iw < 0] = 0
 
-        ih = (torch.min(boxes[:,:,:,3], query_boxes[:,:,:,3]) -
-            torch.max(boxes[:,:,:,1], query_boxes[:,:,:,1]) + 1)
+        ih = (torch.min(boxes[:, :, :, 3], query_boxes[:, :, :, 3]) -
+              torch.max(boxes[:, :, :, 1], query_boxes[:, :, :, 1]) + 1)
         ih[ih < 0] = 0
         ua = anchors_area + gt_boxes_area - (iw * ih)
 
@@ -137,8 +139,8 @@ def overlaps_graph(boxes1, boxes2):
     # 平铺boxes2,重复boxes1.可以比较每个boxes1和每个boxes2,而无需循环。
     tf = torch
     b1 = tf.reshape(tf.tile(tf.expand_dims(boxes1, 1),
-                            [1, 1, tf.shape(boxes2)[0]]), [-1, 4]) # N×4平铺
-    b2 = tf.tile(boxes2, [tf.shape(boxes1)[0], 1]) # N×1重复
+                            [1, 1, tf.shape(boxes2)[0]]), [-1, 4])  # N×4平铺
+    b2 = tf.tile(boxes2, [tf.shape(boxes1)[0], 1])  # N×1重复
     # 2. Compute intersections
     b1_y1, b1_x1, b1_y2, b1_x2 = tf.split(b1, 4, axis=1)
     b2_y1, b2_x1, b2_y2, b2_x2 = tf.split(b2, 4, axis=1)
@@ -161,6 +163,7 @@ def box_refinement_graph(box, gt_box):
     """Compute refinement needed to transform box to gt_box.
     box and gt_box are [N, (y1, x1, y2, x2)]
     计算将box变换到gt_box的修正量 (dy dx dh dw)
+    输入Tensor返回Tensor, 输入Variable返回Variable
     """
     box = box.float()
     gt_box = gt_box.float()
@@ -191,8 +194,26 @@ def trim_zeros(x):
 
     x: [rows, columns].
     """
-    assert len(x.shape) == 2
-    return x[~np.all(x == 0, axis=1)]
+    if type(x) == np.ndarray:
+        assert len(x.shape) == 2
+        return x[~np.all(x == 0, axis=1)]
+
+    elif type(x) in [torch.LongTensor, torch.FloatTensor, torch.ByteTensor]:
+        assert len(x.shape) == 2
+        index = torch.from_numpy(np.where(np.any(x, axis=1))[0]).long()
+        if x.is_cuda:
+            index = index.cuda()
+        return torch.gather(x, dim=0, index=index.unsqueeze(-1).expand(index.shape[0], x.shape[1]))
+
+    elif type(x) == Variable:
+        assert len(x.shape) == 2
+        index = Variable(torch.from_numpy(np.where(np.any(x.data, axis=1))[0]).long())
+        if x.is_cuda:
+            index = index.cuda()
+        return torch.gather(x, dim=0, index=index.unsqueeze(-1).expand(index.shape[0], x.shape[1]))
+
+    else:
+        raise Exception('Wrong data type %s' % type(x))
 
 
 def compute_iou(box, boxes, box_area, boxes_area):
@@ -239,9 +260,7 @@ def compute_overlaps(boxes1, boxes2):
     return overlaps
 
 
-def compute_ap(gt_boxes, gt_class_ids,
-               pred_boxes, pred_class_ids, pred_scores,
-               iou_threshold=0.5):
+def compute_ap(gt_boxes, gt_class_ids, pred_boxes, pred_class_ids, pred_scores, iou_threshold=0.5):
     """Compute Average Precision at a set IoU threshold (default 0.5).
     在给定的IOU阈值下计算平均精度mAP
 
@@ -282,7 +301,7 @@ def compute_ap(gt_boxes, gt_class_ids,
             iou = overlaps[i, j]
             if iou < iou_threshold:
                 break
-            # Do we have a match?
+            # Do we have a match? 类匹配？
             if pred_class_ids[i] == gt_class_ids[j]:
                 match_count += 1
                 gt_match[j] = 1
@@ -305,8 +324,7 @@ def compute_ap(gt_boxes, gt_class_ids,
 
     # Compute mean AP over recall range
     indices = np.where(recalls[:-1] != recalls[1:])[0] + 1
-    mAP = np.sum((recalls[indices] - recalls[indices - 1]) *
-                 precisions[indices])
+    mAP = np.sum((recalls[indices] - recalls[indices - 1]) * precisions[indices])
 
     return mAP, precisions, recalls, overlaps
 
@@ -339,9 +357,8 @@ def non_max_suppression(boxes, scores, threshold):
         # Compute IoU of the picked box with the rest
         iou = compute_iou(boxes[i], boxes[ixs[1:]], area[i], area[ixs[1:]])
         # Identify boxes with IoU over the threshold. This
-        # returns indicies into ixs[1:], so add 1 to get
-        # indicies into ixs.
-        remove_ixs = np.where(iou > threshold)[0] + 1
+        # returns indicies into ixs[1:], so add 1 to get indicies into ixs.
+        remove_ixs = np.where(iou > threshold)[0] + 1  # 不能全部剔除，需要保留对应score最大的那个。
         # Remove indicies of the picked and overlapped boxes.
         ixs = np.delete(ixs, remove_ixs)
         ixs = np.delete(ixs, 0)
@@ -365,7 +382,7 @@ def unique1d(tensor):
 
 
 def intersect1d(tensor1, tensor2):
-    aux = torch.cat((tensor1, tensor2),dim=0)
+    aux = torch.cat((tensor1, tensor2), dim=0)
     aux = aux.sort()[0]
     return aux[:-1][(aux[1:] == aux[:-1]).data]
 
@@ -388,6 +405,12 @@ def unmold_mask(mask, bbox, image_shape):
     to it's original shape.
     mask: [height, width] of type float. A small, typically 28x28 mask.
     bbox: [y1, x1, y2, x2]. The box to fit the mask in.
+
+    因为预测得到的pred_mask，是对一个个rois的预测，即是对图像上某一小块的分割预测，
+    而不是对整个原图的预测。所以要将每个预测mask缩放到bbox大小。
+
+    # todo ??? mask是正方形28*28，但bbox不规则，缩放会不会导致严重误差。
+    将mask缩放到bbox大小，再二值化0/1，再嵌入到与原图大小相同的零值图中。
 
     Returns a binary mask with the same size as the original image.
     """
@@ -433,7 +456,7 @@ def get_ax(rows=1, cols=1, size=8):
     return ax
 
 
-def printProgressBar (iteration, total, prefix = '', suffix = '', decimals = 1, length = 100, fill = '█'):
+def printProgressBar(iteration, total, prefix='', suffix='', decimals=1, length=100, fill='█'):
     """
     Call in a loop to create terminal progress bar
     @params:
@@ -448,7 +471,7 @@ def printProgressBar (iteration, total, prefix = '', suffix = '', decimals = 1, 
     percent = ("{0:." + str(decimals) + "f}").format(100 * (iteration / float(total)))
     filledLength = int(length * iteration // total)
     bar = fill * filledLength + '-' * (length - filledLength)
-    print('\r%s |%s| %s%% %s' % (prefix, bar, percent, suffix), end = '\n')
+    print('\r%s |%s| %s%% %s' % (prefix, bar, percent, suffix), end='\n')
     # Print New Line on Complete
     if iteration == total:
         print()

@@ -37,7 +37,7 @@ class CocoDataset(IMDB, Dataset):
         image_id = self.image_ids[image_index]
 
         image, image_meta, gt_class_ids, gt_boxes, gt_masks = \
-            self.load_image_gt(image_id=image_id, config=self.config, augment=False)
+            self.load_image_gt(image_id=image_id, config=self.config, rgbmean=True, augment=False, chw=True)
 
         # 去空值
         # Skip images that have no instances. This can happen in cases
@@ -54,15 +54,12 @@ class CocoDataset(IMDB, Dataset):
             gt_boxes = gt_boxes[ids]
             gt_masks = gt_masks[:, :, ids]
 
-        # 去均值
-        image = self.mold_image(image.astype(np.float32), self.config.MEAN_PIXEL)
-
         # 转换为Tensor
-        image = torch.from_numpy(image.transpose(2, 0, 1)).float()
+        image = torch.from_numpy(image).float()
         image_meta = torch.from_numpy(image_meta)
         gt_class_ids = torch.from_numpy(gt_class_ids)
         gt_boxes = torch.from_numpy(gt_boxes).float()
-        gt_masks = torch.from_numpy(gt_masks.astype(int).transpose(2, 0, 1)).float()
+        gt_masks = torch.from_numpy(gt_masks).float()
 
         return image, image_meta, gt_class_ids, gt_boxes, gt_masks
 
@@ -73,9 +70,8 @@ class CocoDataset(IMDB, Dataset):
         return self.__class__.__name__
 
     def load_data(self, *args, **kwargs):
-        return self.load_coco
+        return self.load_coco(*args, **kwargs)
 
-    # load coco data
     def load_coco(self, data_dir, subset, year, class_ids=None, class_map=None, auto_download=None, **kwargs):
 
         if auto_download is True:
@@ -143,7 +139,7 @@ class CocoDataset(IMDB, Dataset):
         class_ids = []
         # Build mask of shape [height, width, instance_count] and list
         # of class IDs that correspond to each channel of the mask.
-        # 构造形为[height, weight, instance_count]的mask,且列出mask每个通道的class IDs
+        # 构造形为[height, weight, instance_count]的mask,且列出每个mask实例的class IDs
         for annotation in image_info["annotations"]:
             class_id = self.map_source_class_id("coco.{}".format(annotation['category_id']))
             if class_id:
@@ -164,7 +160,7 @@ class CocoDataset(IMDB, Dataset):
                     # smaller than the given dimensions. If so, resize it.
                     if m.shape[0] != image_info["height"] or m.shape[1] != image_info["width"]:
                         m = np.ones([image_info["height"], image_info["width"]], dtype=bool)
-                        raise ValueError('todo: mask is smaller than image shape!')
+                        raise Exception('todo: mask is smaller than given dimensions!')
                 instance_masks.append(m)
                 class_ids.append(class_id)
 
@@ -192,7 +188,7 @@ class CocoDataset(IMDB, Dataset):
                 if x1 < 0 or y1 < 0 or h < 1 or w < 1 or annotation['area'] < 0:
                     print('warning: bbox value error... todo???')
                     continue
-                x2, y2 = x1 + w - 1, y1 + h - 1
+                x2, y2 = x1 + w, y1 + h     # x2, y2 should not in bbox @ cocoapi/loadRes()
                 instance_bboxes.append(np.array([y1, x1, y2, x2]))
                 class_ids.append(class_id)
 
@@ -238,9 +234,21 @@ class CocoDataset(IMDB, Dataset):
         m = maskUtils.decode(rle)
         return m
 
-    def build_coco_results(self, image_ids, class_ids, scores, rois, masks):
+    def auto_download(self, dataDir, dataType, dataYear):
+        pass
+        return None
+
+    def image_reference(self, image_id):
+        """Return a link to the image in the COCO Website."""
+        info = self.image_info[image_id]
+        if info["source"] == "coco":
+            return "http://cocodataset.org/#explore?id={}".format(info["id"])
+        else:
+            super(CocoDataset, self).image_reference(image_id)
+
+    def build_results(self, image_ids, class_ids, scores, rois, masks):
         """Arrange resutls to match COCO specs in http://cocodataset.org/#format
-            按COCO数据集的官方格式，重新整理检测结果 -> rois
+            按COCO数据集的官方格式，重新整理检测结果 -> results中的每个ROIs与annotations格式相同
         """
         # If no results, return an empty list
         if rois is None:
@@ -263,14 +271,3 @@ class CocoDataset(IMDB, Dataset):
                 }
                 results.append(result)
         return results
-
-    def auto_download(self, dataDir, dataType, dataYear):
-        return None
-
-    def image_reference(self, image_id):
-        """Return a link to the image in the COCO Website."""
-        info = self.image_info[image_id]
-        if info["source"] == "coco":
-            return "http://cocodataset.org/#explore?id={}".format(info["id"])
-        else:
-            super(CocoDataset, self).image_reference(image_id)

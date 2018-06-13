@@ -15,7 +15,7 @@ from torch.nn.modules.utils import _pair
 from RoiTransforms.roi_align.modules.roi_align import RoIAlign, RoIAlignAvg, RoIAlignMax
 from RoiTransforms.roi_crop.modules.roi_crop import RoICropFunction
 from RoiTransforms.roi_pooling.modules.roi_pool import _RoIPooling, RoIPoolFunction
-from RoiTransforms.roi_align2.roi_align import pyramid_roi_align
+from RoiTransforms.roi_align2.roi_align import pyramid_roi_align, parallel_roi_align
 
 
 class ClassBoxNet(nn.Module):
@@ -31,15 +31,7 @@ class ClassBoxNet(nn.Module):
         self.fmap_stride = fmap_stride
         self.level_nums = level_nums
 
-        # 返回Shape: [batch×num_rois, channels, pool_height, pool_width]
-        if level_nums == 1:
-            self.roi_transofrm = RoIAlign(pool_size[0], pool_size[1], fmap_stride[0])
-        elif level_nums > 1:
-            self.roi_transofrm = pyramid_roi_align
-        else:
-            raise ValueError('特征层融合级数错误！')
-
-        self.conv1 = nn.Conv2d(self.indepth, 1024, kernel_size=pool_size, stride=1)
+        self.conv1 = nn.Conv2d(self.indepth, 1024, kernel_size=pool_size, stride=1)     # 全连接
         self.bn1 = nn.BatchNorm2d(1024, eps=0.001, momentum=0.01)
         self.conv2 = nn.Conv2d(1024, 1024, kernel_size=1, stride=1)
         self.bn2 = nn.BatchNorm2d(1024, eps=0.001, momentum=0.01)
@@ -54,6 +46,7 @@ class ClassBoxNet(nn.Module):
         """
         levels=1, levels>1
         RoiAlign: -> [batch*N, channel, h', w']
+        pyramid_roi_align: -> [batch*N, h', w', channel]
         :param
             x: [batch, channel, h, w], [x1, x2, x3, ...]
             rois: [batch, N, (y1, x1, y2, x2)], [rois1, rois2, ...]
@@ -62,11 +55,18 @@ class ClassBoxNet(nn.Module):
             class_probs:  [batch*N, class_nums, (probs)]
             bbox_deltas:  [batch*N, class_nums, (dy, dx, dw, dh)]
         """
-        if self.level_nums == 1:
-            rois = rois_expand(rois).view(-1, 5)
+        # todo ??? 返回Shape: [batch×num_rois, channels, pool_height, pool_width]
+
+        if self.level_nums == 1 and len(rois) == 1:
+            rois = rois_expand(rois).view(-1, 5)    # shape: [batch*N, (batch_index, y2, x2, y1, x1)]
             x = RoIAlignAvg(self.pool_size[0], self.pool_size[1], self.fmap_stride[0])(x[0], rois)
-        else:
+
+        elif self.level_nums > 1 and len(rois) == 1:
             x = pyramid_roi_align([rois]+x, self.pool_size, self.image_shape)
+
+        elif self.level_nums > 1 and len(rois) > 1:
+            # 并行计算, 多对多
+            x = parallel_roi_align(x, rois, self.pool_size, self.image_shape)
 
         x = self.conv1(x)
         x = self.bn1(x)
@@ -99,14 +99,6 @@ class MaskNet(nn.Module):
         self.fmap_stride = fmap_stride
         self.level_nums = level_nums
 
-        # 返回Shape: [batch×num_rois, channels, pool_height, pool_width]
-        if level_nums == 1:
-            self.roi_transofrm = RoIAlign(pool_size[0], pool_size[1], fmap_stride[0])
-        elif level_nums > 1:
-            self.roi_transofrm = pyramid_roi_align
-        else:
-            raise ValueError('特征层融合级数错误！')
-
         self.padding = SamePad2d(kernel_size=3, stride=1)
 
         self.conv1 = nn.Conv2d(self.indepth, 256, kernel_size=3, stride=1)
@@ -126,16 +118,21 @@ class MaskNet(nn.Module):
         """
         levels=1, levels>1
         :param
-            x: [batch, c, h, w]
-            rois: [batch, N, (y1, x1, y2, x2)]
+            x: [batch, c, h, w],                 [x1, x2, ...]
+            rois: [batch, N, (y1, x1, y2, x2)]   [rois1, rois2, ...]
         :return
             x: [batch*N, class_nums, h', w']
         """
-        if self.level_nums == 1:
+        if self.level_nums == 1 and len(rois) == 1:
             rois = rois_expand(rois).view(-1, 5)
-            x = RoIAlign(self.pool_size[0], self.pool_size[1], self.fmap_stride[0])(x[0], rois)
-        else:
+            x = RoIAlignAvg(self.pool_size[0], self.pool_size[1], self.fmap_stride[0])(x[0], rois)
+
+        elif self.level_nums > 1 and len(rois) == 1:
             x = pyramid_roi_align([rois]+x, self.pool_size, self.image_shape)
+
+        elif self.level_nums > 1 and len(rois) > 1:
+            # 并行计算
+            x = parallel_roi_align(x, rois, self.pool_size, self.image_shape)
 
         x = self.conv1(self.padding(x))
         x = self.bn1(x)
@@ -193,8 +190,8 @@ def rois_expand(rois):
     :return rois: [batch, N, (batch_index, y1, x1, y2, x2)] , tensor
     """
     batch, count = rois.shape[0:2]
-    expand = Variable(torch.arange(0, batch), requires_grad=False).cuda()
-    expand = expand.unsqueeze(-1).unsqueeze(-1).expand(batch, count, 1)
+    expand = Variable(torch.arange(0, batch), requires_grad=False).cuda()   # shape batch
+    expand = expand.unsqueeze(-1).unsqueeze(-1).expand(batch, count, 1)     # shape batch x count x 1
     rois = torch.cat([expand, rois], dim=2)
     return rois
 

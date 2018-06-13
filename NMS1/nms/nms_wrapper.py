@@ -5,7 +5,9 @@
 # Written by Ross Girshick
 # --------------------------------------------------------
 
-# original code
+# https://github.com/jwyang/faster-rcnn.pytorch/tree/master/lib/model/nms
+
+# original code ###########
 
 # import torch
 # from model.utils.config import cfg
@@ -13,10 +15,11 @@
 #     from model.nms.nms_gpu import nms_gpu
 # from model.nms.nms_cpu import nms_cpu
 
-# new code
+# new code #############
 
 import torch
-# from Configs.config import Config
+from Configs.config import Config
+
 if torch.cuda.is_available():
     from .nms_gpu import nms_gpu
 from .nms_cpu import nms_cpu

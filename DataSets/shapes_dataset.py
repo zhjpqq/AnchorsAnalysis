@@ -28,12 +28,12 @@ from DataSets.imdb import IMDB
 class ShapesDataset(IMDB, Dataset):
 
     def __getitem__(self, image_index):
-        """获取单张image数据，区别于generate获取一个batch的images数据"""
+        """获取单张image数据，区别于IMDB.generate获取一个batch的images数据"""
 
         image_id = self.image_ids[image_index]
 
         image, image_meta, gt_class_ids, gt_boxes, gt_masks = \
-            self.load_image_gt(image_id=image_id, config=self.config, augment=False)
+            self.load_image_gt(image_id=image_id, config=self.config, rgbmean=True, augment=False, chw=True)
 
         # 去空值
         # Skip images that have no instances. This can happen in cases
@@ -50,15 +50,12 @@ class ShapesDataset(IMDB, Dataset):
             gt_boxes = gt_boxes[ids]
             gt_masks = gt_masks[:, :, ids]
 
-        # 去均值
-        image = self.mold_image(image.astype(np.float32), self.config.MEAN_PIXEL)
-
         # 转换为Tensor
-        image = torch.from_numpy(image.transpose(2, 0, 1)).float()
+        image = torch.from_numpy(image).float()
         image_meta = torch.from_numpy(image_meta)
         gt_class_ids = torch.from_numpy(gt_class_ids)
         gt_boxes = torch.from_numpy(gt_boxes).float()
-        gt_masks = torch.from_numpy(gt_masks.astype(int).transpose(2, 0, 1)).float()
+        gt_masks = torch.from_numpy(gt_masks.astype(int)).float()
 
         return image, image_meta, gt_class_ids, gt_boxes, gt_masks
 

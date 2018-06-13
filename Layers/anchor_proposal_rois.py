@@ -195,18 +195,18 @@ class HotAnchorLayer(nn.Module):
 
 
 class HotProposalLayer(nn.Module):
-    def __init__(self, mode, counts, image_shape, level_nums):
+    def __init__(self, mode, counts, image_shape, levels):
         """
         1. 利用bbox内热度过滤anchors
         :param mode:
         :param counts:
         :param shape: 原图尺寸 (h, w, c)
-        :param level_nums:
+        :param level:
         """
         self.mode = mode
         self.counts = counts
         self.shape = image_shape
-        self.level_nums = level_nums
+        self.levels = levels
         super(HotProposalLayer, self).__init__()
 
     def forward(self, anchors, feature_maps):
@@ -218,14 +218,14 @@ class HotProposalLayer(nn.Module):
         all_proposals = []
 
         # 单层特征图
-        if self.level_nums == 1:
+        if self.levels == 1:
             proposals = self.simple_heat_filter(anchors[0], feature_maps[0], self.counts)
             all_proposals.append(proposals)
 
         # 多层特征图
         # 1.每层特征图独立处理/独立排序, 独立返回
         # 2.各层特征图独立处理/独立排序, 综合返回，同一个点可能同时在不同层上被检测出！
-        elif self.level_nums > 1:
+        elif self.levels > 1:
             for anchs, fmap in zip(anchors, feature_maps):
                 proposals = self.simple_heat_filter(anchs, fmap, self.counts)
                 all_proposals.append(proposals)
@@ -492,8 +492,8 @@ class RoiTargetLayer(nn.Module):
         # GT-mask是一个H×W的二值图，因此裁切出来的仍然是一个小二值图
         # 此小二值图，即是此roi_box的gt_mask_targets，可用于计算二值交叉熵损失
         # Assign positive ROIs to GT masks
-        # Permute masks from [n, h, w] to [N, height, width, channel==1] 跟box的坐标相对应
-        transposed_masks = torch.unsqueeze(gt_masks, dim=-1)
+        # Permute masks from [h, w, n] to [N, height, width, channel==1] 跟box的坐标相对应
+        transposed_masks = torch.unsqueeze(torch.transpose(gt_masks, 2, 0, 1), dim=-1)
 
         # Pick the right mask for each ROI
         roi_masks_index = roi_gt_box_assignment.unsqueeze(-1).unsqueeze(-1).unsqueeze(-1)

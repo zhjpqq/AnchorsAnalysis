@@ -15,15 +15,17 @@ from torch.utils.data import DataLoader
 from torch import optim
 
 from Models.backbone import backbone
-from Models.fpn import FPN
+from Models.fusionnet import fusionnet
+from Models.fpnet import FPNet
 from Models.lscnet import LSCNet
-from Layers.simple_net import SimpleNet
-from Layers.anchor_proposal_rois import HotAnchorLayer, HotProposalLayer, RoiTargetLayer, RoiTransformLayer
+from Layers.anchors import PyramidAnchorLayer
+from Layers.proposals import HotProposalLayer
+from Layers.rois import RoiTargetLayer
 from Layers.class_bbox_mask import ClassBoxNet, MaskNet
-from Layers.detections import detection_layer, pyramid_detection_layer
+from Layers.detections import pyramid_detection_layer
 from Layers.loss import compute_losses
 from Utils import utils, visualize
-from DataSets.coco_dataset import CocoDataset
+from DataSets.imdb import IMDB
 
 
 class HotRCNN(nn.Module):
@@ -51,33 +53,29 @@ class HotRCNN(nn.Module):
                                  model_dir=config.BACKBONE_DIR, include=config.BACKBONE_INCLUDE)
 
         # 特征融合网络
-        if config.FEATURE_FUSION_METHOD == 'fpn':
-            self.fpnet = FPN(channels=256)
-        elif config.FEATURE_FUSION_METHOD == 'lsc':
-            self.lscnet = LSCNet(indepth=config.LSC_IN_CHANNELS, outdepth=config.LSC_OUT_CHANNELS,
-                                 kernel=config.LSC_KERNEL_SIZE, levels=1)
-        elif config.FEATURE_FUSION_METHOD == 'simple':
-            self.simplenet = SimpleNet(indepth=config.LSC_IN_CHANNELS, outdepth=config.LSC_OUT_CHANNELS,
-                                       kernel=config.LSC_KERNEL_SIZE, levels=1)
-        elif config.FEATURE_FUSION_METHOD == 'none':
-            pass
-        else:
-            raise ValueError('未知的参数设定！FEATURE_FUSION_METHOD！')
+        self.fusionnet = fusionnet(method=config.FUSION_METHOD,
+                                   levels=config.FUSION_LEVELS,
+                                   indepth=config.FUSION_CHANNELS_IN,
+                                   outdepth=config.FUSION_CHANNELS_OUT,
+                                   strides=config.FUSION_STRIDES,
+                                   shapes=config.FUSION_SHAPES)
 
         # Anchors生成层
-        self.anchors_generate = HotAnchorLayer(scales=config.ANCHOR_SCALES,
-                                               ratios=config.ANCHOR_ASPECTS,
-                                               counts=config.ANCHORS_PER_IMAGE,
-                                               level_nums=config.ANCHOR_LEVEL_NUMS,
-                                               heat_method=config.ANCHOR_HEAT_METHOD,
-                                               zero_area=config.ANCHOR_ZERO_AREA,
-                                               image_shape=config.IMAGE_SHAPE)
+        self.anchors_generate = PyramidAnchorLayer(scales=config.ANCHOR_SCALES,
+                                                   ratios=config.ANCHOR_ASPECTS,
+                                                   stride=config.ANCHOR_STRIDE,
+                                                   counts=config.ANCHORS_PER_IMAGE,
+                                                   levels=config.ANCHOR_LEVELS,
+                                                   zero_area=config.ANCHOR_ZERO_AREA,
+                                                   feature_shapes=config.FUSION_SHAPES,
+                                                   feature_strides=config.FUSION_STRIDES)
+        if self.config.GPU_COUNT > 0:
+            self.anchors = self.anchors.cuda()
 
         # Proposals选择层
-        self.proposals_select = HotProposalLayer(mode='',
-                                                 counts=config.PROPOSALS_PER_IMAGE,
+        self.proposals_select = HotProposalLayer(counts=config.PROPOSALS_PER_IMAGE,
                                                  image_shape=config.IMAGE_SHAPE,
-                                                 level_nums=config.ANCHOR_LEVEL_NUMS)
+                                                 levels=config.ANCHOR_LEVEL_NUMS)
 
         # ROIs-GT匹配层，Proposal-GTbox匹配，RoiTargetLayer, 训练阶段
         self.rois_target_match = RoiTargetLayer(config=config)
@@ -86,18 +84,18 @@ class HotRCNN(nn.Module):
         # self.rois_transform = RoiTransformLayer(config=config)
 
         # class bbox head
-        self.class_bbox_net = ClassBoxNet(indepth=config.FEATURE_FUSION_CHANNELS,
+        self.class_bbox_net = ClassBoxNet(indepth=config.FUSION_CHANNELS_OUT,
                                           pool_size=config.BBOX_POOL_SIZE,
                                           image_shape=config.IMAGE_SHAPE,
-                                          fmap_stride=config.FEATURE_FUSION_STRIDES,
+                                          fmap_stride=config.FUSION_STRIDES,
                                           class_nums=config.CLASSES_NUMS,
                                           level_nums=config.ANCHOR_LEVEL_NUMS)
 
         # mask head
-        self.mask_net = MaskNet(indepth=config.FEATURE_FUSION_CHANNELS,
+        self.mask_net = MaskNet(indepth=config.FUSION_CHANNELS_OUT,
                                 pool_size=config.MASK_POOL_SIZE,
                                 image_shape=config.IMAGE_SHAPE,
-                                fmap_stride=config.FEATURE_FUSION_STRIDES,
+                                fmap_stride=config.FUSION_STRIDES,
                                 class_nums=config.CLASSES_NUMS,
                                 level_nums=config.ANCHOR_LEVEL_NUMS)
 
@@ -116,7 +114,7 @@ class HotRCNN(nn.Module):
 
         self.apply(set_bn_fix)
 
-    def predict(self, inputs, mode):
+    def predict(self, inputs, mode, verbose=0):
         """
         0.输入较正
         1.特征计算
@@ -137,30 +135,21 @@ class HotRCNN(nn.Module):
         elif mode == 'inference':
             self.eval()
 
+        # fmaps = [C1, C2, C3, C4, C5]
         fmaps = self.backbone(molded_images)
 
-        if self.config.FEATURE_FUSION_METHOD == 'fpn':
-            fmaps = self.fpnet(fmaps)
-        elif self.config.FEATURE_FUSION_METHOD == 'lsc':
-            fmaps = self.lscnet(fmaps)
-        elif self.config.FEATURE_FUSION_METHOD == 'none':
-            fmaps = [fmaps]
-        else:
-            raise ValueError('unknown method!')
+        # fmaps = [P2, P3, P4, P5, P6]
+        fmaps = self.fusionnet(fmaps)
 
-        anchors = self.anchors_generate(fmaps)
+        anchors = self.anchors_generate()
 
-        proposals = self.proposals_select(anchors, fmaps)
+        # [batch, N, (y2, x2, y1, x1)]
+        proposals = self.proposals_select(fmaps, anchors)
 
         if mode == 'training':
             gt_class_ids = inputs[2]
             gt_boxes = inputs[3]
             gt_masks = inputs[4]
-
-            # 归一化坐标
-            h, w = self.config.IMAGE_SHAPE[0:2]
-            scale = Variable(torch.FloatTensor(np.array([h, w, h, w]).astype(np.int32)), requires_grad=False).cuda()
-            gt_boxes = gt_boxes / scale
 
             # 生成检测目标 zero-padded
             rois, target_class_ids, target_deltas, target_masks = \
@@ -184,24 +173,29 @@ class HotRCNN(nn.Module):
         elif mode == 'inference':
 
             # proposals ：[[batch, N, (y1, x1, y2, x2), ., ...]]
-            rois = proposals[0]
+            rois = proposals
 
             class_logits, class_probs, pred_deltas = self.class_bbox_net(fmaps, rois)
 
             # Detections
-            # output is [batch, num_detections, (y1, x1, y2, x2, class_id, score)] in image coordinates
-            detections, allboxes = self.detection_layer(self.config, rois, class_probs, pred_deltas, image_metas, True)
+            # detections: [batch, num_detections, (y1, x1, y2, x2, class_id, score)] in image coordinates
+            # allboxes: [batch, num_detections, (y1, x1, y2, x2)] in image/normalized coodinates
+            detections, allboxes = self.detection_layer(rois, class_probs, pred_deltas, image_metas, True, self.config)
 
             # Create masks for detections
+            # pred_masks: [b*N, class_nums, h', w'] -> [batch, num_detections, class_nums, h', w']
             pred_masks = self.mask_net(fmaps, allboxes)
-            pred_masks = pred_masks.unsqueeze(0)
+            pred_masks = pred_masks.view(allboxes.shape[0:2] + pred_masks.shape[1:])
 
             return [detections, pred_masks]
 
-    def detect(self, images):
+    def detect(self, images, metas=None, verbose=0):
         """Runs the detection pipeline.
-
         images: List of images, potentially of different sizes.
+        metas: List of image metas, [N, length of meta data].
+
+        如果meta=None, 说明输入是原始图片，尚未经过预处理(缩放/去均值)。
+        如果meta!=None, 说明输入图片和meta是经过处理的批量数据。
 
         Returns a list of dicts, one dict per image. The dict contains:
         rois: [N, (y1, x1, y2, x2)] detection bounding boxes
@@ -211,14 +205,15 @@ class HotRCNN(nn.Module):
         """
 
         # Mold inputs to format expected by the neural network
-        molded_images, image_metas, windows = self.mold_inputs(images)
+        # molded_images: [N, 3, h, w], image_metas: [N, length of meta data]
+        if metas is None:
+            molded_images, image_metas, _ = self.mold_inputs(images)
+        else:
+            assert images.shape == 4 and images.shape[1] == 3
+            molded_images, image_metas = images, metas
 
         # Convert images to torch tensor
-        molded_images = torch.from_numpy(molded_images.transpose(0, 3, 1, 2)).float()
-
-        # To GPU
-        if self.config.GPU_COUNT:
-            molded_images = molded_images.cuda()
+        molded_images = torch.from_numpy(molded_images).float().cuda()
 
         # Wrap in variable
         molded_images = Variable(molded_images, volatile=True)
@@ -228,14 +223,13 @@ class HotRCNN(nn.Module):
 
         # Convert to numpy
         detections = detections.data.cpu().numpy()
-        pred_masks = pred_masks.permute(0, 1, 3, 4, 2).data.cpu().numpy()  # todo [b, N, H, W, C] ?
+        pred_masks = pred_masks.permute(0, 1, 3, 4, 2).data.cpu().numpy()  # -> [b, N, H, W, class_nums]
 
         # Process detections
         results = []
-        for i, image in enumerate(images):
+        for i, image in enumerate(molded_images):
             final_rois, final_class_ids, final_scores, final_masks = \
-                self.unmold_detections(detections[i], pred_masks[i],
-                                       image.shape, windows[i])
+                self.unmold_detections(detections[i], pred_masks[i], image_metas[i][1:4], image_metas[i][4:8])
             results.append({
                 "rois": final_rois,
                 "class_ids": final_class_ids,
@@ -261,27 +255,28 @@ class HotRCNN(nn.Module):
         self.set_trainable(layers)
 
         # data iterator # not generator!
-        trainset_iter = DataLoader(train_dataset, batch_size=1, shuffle=True, num_workers=4)
-        valset_iter = DataLoader(val_dataset, batch_size=1, shuffle=True, num_workers=4)
+        trainset_loader = DataLoader(train_dataset, batch_size=1, shuffle=True, num_workers=4)
+        valset_loader = DataLoader(val_dataset, batch_size=1, shuffle=True, num_workers=4)
 
         # Optimizer object
         # Add L2 Regularization
         # Skip gamma and beta weights of batch normalization layers.
-        trainables_wo_bn = [param for name, param in self.named_parameters() if param.requires_grad and 'bn' not in name]
+        trainables_wo_bn = [param for name, param in self.named_parameters() if
+                            param.requires_grad and 'bn' not in name]
         trainables_only_bn = [param for name, param in self.named_parameters() if param.requires_grad and 'bn' in name]
         optimizer = optim.SGD([
             {'params': trainables_wo_bn, 'weight_decay': self.config.WEIGHT_DECAY},
             {'params': trainables_only_bn}
         ], lr=learning_rate, momentum=self.config.LEARNING_MOMENTUM)
 
-        for epoch in range(self.epoch, epochs+1):
+        for epoch in range(self.epoch, epochs + 1):
             utils.log("Epoch {}/{}.".format(epoch, epochs))
 
             # Training
-            train_loss = self.train_epoch(trainset_iter, optimizer, self.config.TRAIN_STEPS_PER_EPOCH)
+            train_loss = self.train_epoch(trainset_loader, optimizer, self.config.TRAIN_STEPS_PER_EPOCH)
 
             # Validation
-            val_loss = self.valid_epoch(valset_iter, self.config.VAL_STEPS_PER_EPOCH)
+            val_loss = self.valid_epoch(valset_loader, self.config.VAL_STEPS_PER_EPOCH)
 
             # Statistics
             self.train_loss_history.append(train_loss)
@@ -304,27 +299,12 @@ class HotRCNN(nn.Module):
         for inputs in dataiterator:
             batch_count += 1
 
-            images = inputs[0]
-            image_metas = inputs[1]
-            gt_class_ids = inputs[2]
-            gt_boxes = inputs[3]
-            gt_masks = inputs[4]
-
-            # image_metas as numpy array
-            image_metas = image_metas.numpy()
-
-            # Wrap in variables
-            images = Variable(images)
-            gt_class_ids = Variable(gt_class_ids)
-            gt_boxes = Variable(gt_boxes)
-            gt_masks = Variable(gt_masks)
-
-            # To GPU
-            if self.config.GPU_COUNT:
-                images = images.cuda()
-                gt_class_ids = gt_class_ids.cuda()
-                gt_boxes = gt_boxes.cuda()
-                gt_masks = gt_masks.cuda()
+            #  Wrap all Tensor in Variable
+            images = Variable(inputs[0]).cuda()
+            image_metas = inputs[1].numpy()
+            gt_class_ids = Variable(inputs[2]).cuda()
+            gt_boxes = Variable(inputs[3]).cuda()
+            gt_masks = Variable(inputs[4]).cuda()
 
             # Run object detection
             target_class_ids, class_logits, target_deltas, pred_deltas, target_masks, pred_masks = \
@@ -367,27 +347,11 @@ class HotRCNN(nn.Module):
         loss_sum = 0
 
         for inputs in dataiterator:
-            images = inputs[0]
-            image_metas = inputs[1]
-            gt_class_ids = inputs[2]
-            gt_boxes = inputs[3]
-            gt_masks = inputs[4]
-
-            # image_metas as numpy array
-            image_metas = image_metas.numpy()
-
-            # Wrap in variables
-            images = Variable(images, volatile=True)
-            gt_class_ids = Variable(gt_class_ids, volatile=True)
-            gt_boxes = Variable(gt_boxes, volatile=True)
-            gt_masks = Variable(gt_masks, volatile=True)
-
-            # To GPU
-            if self.config.GPU_COUNT:
-                images = images.cuda()
-                gt_class_ids = gt_class_ids.cuda()
-                gt_boxes = gt_boxes.cuda()
-                gt_masks = gt_masks.cuda()
+            images = Variable(inputs[0], volatile=True).cuda()
+            image_metas = inputs[1].numpy()
+            gt_class_ids = Variable(inputs[2], volatile=True).cuda()
+            gt_boxes = Variable(inputs[3], volatile=True).cuda()
+            gt_masks = Variable(inputs[4], volatile=True).cuda()
 
             # Run object detection
             target_class_ids, class_logits, target_deltas, pred_deltas, target_masks, pred_masks = \
@@ -531,13 +495,12 @@ class HotRCNN(nn.Module):
                 # print('%s will be training!' % name)
 
     def mold_inputs(self, images):
-        """Takes a list of images and modifies them to the format expected
+        """Takes a list of images and modifies/transform them to the format expected
         as an input to the neural network.
-        images: List of image matricies [height,width,depth]. Images can have
-            different sizes.
+        images: List of image matricies [height,width,depth]. Images can have different sizes.
 
         Returns 3 Numpy matricies:
-        molded_images: [N, h, w, 3]. Images resized and normalized.
+        molded_images: [N, 3, h, w]. Images resized and normalized.
         image_metas: [N, length of meta data]. Details about each image.
         windows: [N, (y1, x1, y2, x2)]. The portion of the image that has the
             original image (padding excluded).
@@ -545,37 +508,39 @@ class HotRCNN(nn.Module):
         molded_images = []
         image_metas = []
         windows = []
-        for image in images:
+        for i, image in enumerate(images):
+            # RGB mean image to minus rgb mean pixel
+            molded_image = IMDB.mold_image(image, self.config.MEAN_PIXEL)
             # Resize image to fit the model expected size
-            # TODO: move resizing to mold_image()
-            molded_image, window, scale, padding = CocoDataset.resize_image(
-                image,
+            molded_image, window, scale, padding = IMDB.resize_image(
+                molded_image,
                 min_dim=self.config.IMAGE_MIN_DIM,
                 max_dim=self.config.IMAGE_MAX_DIM,
                 padding=self.config.IMAGE_PADDING)
-            molded_image = CocoDataset.mold_image(molded_image, self.config.MEAN_PIXEL)
+            # Channel First
+            molded_image = molded_image.transpose((2, 0, 1))
             # Build image_meta
-            image_meta = CocoDataset.compose_image_meta(
-                0, image.shape, window,
+            image_meta = IMDB.compose_image_meta(
+                i, image.shape, window,
                 np.zeros([self.config.CLASSES_NUMS], dtype=np.int32))
             # Append
             molded_images.append(molded_image)
-            windows.append(window)
             image_metas.append(image_meta)
+            windows.append(window)
         # Pack into arrays
         molded_images = np.stack(molded_images)
         image_metas = np.stack(image_metas)
         windows = np.stack(windows)
         return molded_images, image_metas, windows
 
-    def unmold_detections(self, detections, mrcnn_mask, image_shape, window):
+    def unmold_detections(self, detections, pred_masks, image_shape, window):
         """Reformats the detections of one image from the format of the neural
         network output to a format suitable for use in the rest of the
         application.
 
-        detections: [N, (y1, x1, y2, x2, class_id, score)]
-        mrcnn_mask: [N, height, width, num_classes]
-        image_shape: [height, width, depth] Original size of the image before resizing
+        detections: [N, (y1, x1, y2, x2, class_id, score)]，坐标已经被裁剪到了window之内！
+        pred_masks: [N, height, width, num_classes]
+        image_shape: [height, width, depth] Original size of the image before resizing，原始图片的尺寸！！！
         window: [y1, x1, y2, x2] Box in the image where the real image is
                 excluding the padding.
 
@@ -594,23 +559,23 @@ class HotRCNN(nn.Module):
         boxes = detections[:N, :4]
         class_ids = detections[:N, 4].astype(np.int32)
         scores = detections[:N, 5]
-        masks = mrcnn_mask[np.arange(N), :, :, class_ids]
+        masks = pred_masks[np.arange(N), :, :, class_ids]
 
         # Compute scale and shift to translate coordinates to image domain.
+        # mold_inputs中的IMDB.resize_image()的逆向操作！
         h_scale = image_shape[0] / (window[2] - window[0])
         w_scale = image_shape[1] / (window[3] - window[1])
         scale = min(h_scale, w_scale)
-        shift = window[:2]  # y, x
         scales = np.array([scale, scale, scale, scale])
+        shift = window[:2]  # y1, x1 左上角点距原点的偏移量
         shifts = np.array([shift[0], shift[1], shift[0], shift[1]])
 
-        # Translate bounding boxes to image domain
+        # Translate bounding boxes to image domain，先平移再缩放。
         boxes = np.multiply(boxes - shifts, scales).astype(np.int32)
 
         # Filter out detections with zero area. Often only happens in early
         # stages of training when the network weights are still a bit random.
-        exclude_ix = np.where(
-            (boxes[:, 2] - boxes[:, 0]) * (boxes[:, 3] - boxes[:, 1]) <= 0)[0]
+        exclude_ix = np.where((boxes[:, 2] - boxes[:, 0]) * (boxes[:, 3] - boxes[:, 1]) <= 0)[0]
         if exclude_ix.shape[0] > 0:
             boxes = np.delete(boxes, exclude_ix, axis=0)
             class_ids = np.delete(class_ids, exclude_ix, axis=0)
@@ -624,8 +589,12 @@ class HotRCNN(nn.Module):
             # Convert neural network mask to full size mask
             full_mask = utils.unmold_mask(masks[i], boxes[i], image_shape)
             full_masks.append(full_mask)
-        full_masks = np.stack(full_masks, axis=-1) \
-            if full_masks else np.empty((0,) + masks.shape[1:3])
+
+        if full_masks:
+            full_masks = np.stack(full_masks, axis=-1)
+        else:
+            # full_masks = np.empty((0,) + masks.shape[1:3])    # original
+            full_masks = np.empty(masks.shape[1:3] + (0,))
 
         return boxes, class_ids, scores, full_masks
 
@@ -663,7 +632,8 @@ class HotRCNN(nn.Module):
             regex = r".*/\w+(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})/hot\_rcnn\_\w+(\d{4})\.h5"
             m = re.match(regex, model_path)
             if m:
-                now = datetime.datetime(int(m.group(1)), int(m.group(2)), int(m.group(3)), int(m.group(4)), int(m.group(5)))
+                now = datetime.datetime(int(m.group(1)), int(m.group(2)), int(m.group(3)), int(m.group(4)),
+                                        int(m.group(5)))
                 self.epoch = int(m.group(6)) + 1  # m.group(6): 匹配到的最后一个d{4}
 
         # Directory for training logs 根据解码出的日期，或当前日期，拼写出日志ckpt目录

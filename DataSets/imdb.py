@@ -1,4 +1,3 @@
-
 # -*- coding: utf-8 -*-
 __author__ = 'ooo'
 __date__ = ' 15:09'
@@ -70,6 +69,11 @@ class IMDB(object):
         image_info.update(kwargs)
         self.image_info.append(image_info)
 
+    # 加载数据集
+    def load_data(self, *args, **kwargs):
+        """在子类中继承，从JSON/XML等文件中加载数据信息"""
+        raise NotImplementedError('必须在子类中继承实现')
+
     # 加载图片
     def load_image(self, image_id):
         image = skimage.io.imread(self.image_info[image_id]['path'])
@@ -77,31 +81,43 @@ class IMDB(object):
             image = skimage.color.gray2rgb(image)
         return image
 
-    # 加载掩膜  !!!！需继承
+    # 加载掩膜
     def load_mask(self, image_id):
         """
         mask: [1/0] 构成的binary bool数组, shape: (h, w, c)
-        在子类继承中实现，不同数据集的掩膜表示方法不一样
+        在子类继承中实现，不同数据集的掩膜表示方法不一样.
         """
         mask = np.empty([0, 0, 0])
         class_ids = np.empty([0], dtype='int32')
-        print('\n an empty mask is loaded... @IMDB.load_mask()\n')
+        # print('\n an empty mask is loaded... @IMDB.load_mask()\n')
         return mask, class_ids
 
-    # 加载bbox  !!!！需继承
+    # 加载bbox
     def load_bbox(self, image_id):
         """
         bboxs: np.array([counts, (y1, x1, y2, x2)])
         """
-        bboxes = np.empty([0, 0, 0, 0])
+        bboxs = np.empty([0, 0, 0, 0])
         class_ids = np.empty([0], dtype='int32')
-        return bboxes, class_ids
+        return bboxs, class_ids
 
-    # 为单张图片加载GT_class_ids bbox mask
-    def load_image_gt(self, image_id, config, augment=False):
+    # 为单张图片加载 gt_class_ids bbox mask
+    def load_image_gt(self, image_id, config, rgbmean=True, augment=False, chw=True):
+        """
+        resize、rgbmean、augment、chw都是Transform的一种，还可以指定更多的变换方案。
+        所以，所有的Transform操作都统一在这个函数中比较适合。（去均值、缩放、翻转、通道调整）
+
+        去均值应该在缩放之前，否则缩放时的0填充会被均值占掉，相当于填充区域未去均值.
+        """
         image = self.load_image(image_id)
         mask, class_ids = self.load_mask(image_id)
         shape = image.shape
+
+        # mean transform
+        if rgbmean:
+            image = self.mold_image(image, config.MEAN_PIXEL)
+
+        # resize transform
         image, window, scale, padding = self.resize_image(
             image,
             min_dim=config.IMAGE_MIN_DIM,
@@ -109,11 +125,14 @@ class IMDB(object):
             padding=config.IMAGE_PADDING)
         mask = self.resize_mask(mask, scale, padding)
 
-        # Random horizontal flips.
-        if augment:
-            if random.randint(0, 1):
-                image = np.fliplr(image)
-                mask = np.fliplr(mask)
+        # Flip transform, Random horizontal flips.
+        if augment and random.randint(0, 2):
+            image = np.fliplr(image)
+            mask = np.fliplr(mask)
+
+        # CWH transform
+        if chw:
+            image = np.transpose(image, axes=(2, 0, 1))
 
         # Bounding boxes. Note that some boxes might be all zeros
         # if the corresponding mask got cropped out.
@@ -137,23 +156,23 @@ class IMDB(object):
         return image, image_meta, class_ids, bbox, mask
 
     # 为单张图片加载 gt_class_ids gt_bbox
-    # bbox: [num_instances, (y1, x1, y2, x2)]
-    def load_image_gtbbox(self, image_id, config, augment=False):
+    def load_image_gtbbox(self, image_id, config, rgbmean=True, augment=False):
+        # bbox: [num_instances, (y1, x1, y2, x2)]
         image = self.load_image(image_id)
         bboxes, class_ids = self.load_bbox(image_id)
         shape = image.shape
+        if rgbmean:
+            image = self.mold_image(image, config.MEAN_PIXEL)
         image, window, scale, padding = self.resize_image(
             image,
             min_dim=config.IMAGE_MIN_DIM,
             max_dim=config.IMAGE_MAX_DIM,
             padding=config.IMAGE_PADDING)
         bboxes = self.resize_bbox(bboxes, scale, padding)
-
         # Random horizontal flips.
-        if augment:
-            if random.randint(0, 1):
-                image = np.fliplr(image)
-                bboxes = np.fliplr(bboxes)
+        if augment and random.randint(0, 2):
+            image = np.fliplr(image)
+            bboxes = np.fliplr(bboxes)
 
         # Bounding boxes. Note that some boxes might be all zeros
         # if the corresponding mask got cropped out.
@@ -170,47 +189,6 @@ class IMDB(object):
         image_meta = self.compose_image_meta(image_id, shape, window, active_class_ids)
 
         return image, image_meta, class_ids, bboxes
-
-    # 加载某类数据集 !!! 需继承！！！
-    def load_data(self, *args, **kwargs):
-        """在子类中继承，加载实际数据集信息"""
-        raise NotImplementedError('必须在子类中继承实现')
-
-    # 准备图片，以用于训练或测试，dict → list
-    def prepare(self, class_map=None):
-        """
-        将来自不同数据集的图片进行整理
-        :param class_map: 暂时不可用
-        :return:
-        """
-
-        def clean_name(name):
-            return ''.join(name.split(',')[:1])
-
-        # 从信息字典中重构数据集
-        self.sources = list(set([c['source'] for c in self.class_info]))
-        self.class_nums = len(self.class_info)
-        self.class_ids = np.arange(self.class_nums)
-        self.class_names = [clean_name(c['name']) for c in self.class_info]
-        self.image_nums = len(self.image_info)
-        self._image_ids = np.arange(self.image_nums)
-
-        # 将源数据集的类别ID与新数据集的类别ID进行关联，源数据集可能是多个不同数据集，
-        # 如{"{VOC}.{1}":0,"{ImageNet}.{22}":1,"{COCO}.{9}":2,……}
-        self.class_from_source_map = {"{}.{}".format(info['source'], info['id']): id
-                                      for info, id in zip(self.class_info, self.class_ids)}
-
-        # Map sources to class_ids they support
-        # 将源数据集的源Name与新数据集的类别ID进行关联
-        # 构建sources与class_ids之间的映射字典：
-        # source_class_ids: {'source1':[class1,class2,class3],……}
-        for source in self.sources:
-            self.source_class_ids[source] = []
-            # Find classes that belong to this dataset
-            for i, info in enumerate(self.class_info):
-                # Include BG class in all datasets
-                if i == 0 or source == info['source']:
-                    self.source_class_ids[source].append(info['id'])
 
     # 映射 源数据集.类标 → 新数据集类标
     def map_source_class_id(self, source_class_id):
@@ -252,6 +230,42 @@ class IMDB(object):
         """
         return ''
 
+    # 准备图片，以用于训练或测试，dict → list
+    def prepare(self, class_map=None):
+        """
+        将来自不同数据集的图片进行整理
+        :param class_map: 暂时不可用
+        :return:
+        """
+
+        def clean_name(name):
+            return ''.join(name.split(',')[:1])
+
+        # 从信息字典中重构数据集
+        self.sources = list(set([c['source'] for c in self.class_info]))
+        self.class_nums = len(self.class_info)
+        self.class_ids = np.arange(self.class_nums)
+        self.class_names = [clean_name(c['name']) for c in self.class_info]
+        self.image_nums = len(self.image_info)
+        self._image_ids = np.arange(self.image_nums)
+
+        # 将源数据集的类别ID与新数据集的类别ID进行关联，源数据集可能是多个不同数据集，
+        # 如{"{VOC}.{1}":0,"{ImageNet}.{22}":1,"{COCO}.{9}":2,……}
+        self.class_from_source_map = {"{}.{}".format(info['source'], info['id']): id
+                                      for info, id in zip(self.class_info, self.class_ids)}
+
+        # Map sources to class_ids they support
+        # 将源数据集的源Name与新数据集的类别ID进行关联
+        # 构建sources与class_ids之间的映射字典：
+        # source_class_ids: {'source1':[class1,class2,class3],……}
+        for source in self.sources:
+            self.source_class_ids[source] = []
+            # Find classes that belong to this dataset
+            for i, info in enumerate(self.class_info):
+                # Include BG class in all datasets
+                if i == 0 or source == info['source']:
+                    self.source_class_ids[source].append(info['id'])
+
     # 数据生成器 generator
     def generator(self, config, batch_size=None, shuffle=None, augment=None):
         """
@@ -286,7 +300,7 @@ class IMDB(object):
                 # 获取GT box 和 mask
                 image_id = image_ids[image_index]
                 image, image_meta, gt_class_ids, gt_boxes, gt_masks = \
-                    self.load_image_gt(image_id, config, augment=augment)
+                    self.load_image_gt(image_id, config, rgbmean=True, augment=augment, chw=True)
 
                 # 跳过没有实例的图像。这种情况适用于：
                 # 假设所有类的一个子集上训练，但某图片中的实例类都不在此子集中，则跳过此图片。
@@ -299,7 +313,7 @@ class IMDB(object):
                     batch_image_meta = np.zeros((batch_size,) + image_meta.shape, dtype=image_meta.dtype)
                     batch_gt_class_ids = np.zeros((batch_size,) + config.MAX_GT_INSTANCES, dtype=np.int32)
                     batch_gt_boxes = np.zeros((batch_size,) + config.MAX_GT_INSTANCES, dtype=np.int32)
-                    if not config.USE_MINI_MASK:
+                    if config.USE_MINI_MASK:
                         batch_gt_masks = np.zeros((batch_size, config.MINI_MASK_SHAPE[0], config.MINI_MASK_SHAPE[1],
                                                    config.MAX_GT_INSTANCES))
                     else:
@@ -314,7 +328,7 @@ class IMDB(object):
                     gt_masks = gt_masks[:, :, ids]
 
                 # 将数据装入batch数组中 数量不足的部分全为0
-                batch_images[b] = self.mold_image(image, config.MEAN_PIXEL)
+                batch_images[b] = image
                 batch_image_meta[b] = image_meta
                 batch_gt_class_ids[b, :gt_class_ids.shape[0]] = gt_class_ids
                 batch_gt_boxes[b, :gt_boxes.shape[0]] = gt_boxes
@@ -325,8 +339,7 @@ class IMDB(object):
                 # 直到装满一个batchSize, 则yield返回一个迭代器
                 # Batch full?  batchSize = GPU_COUNT*IMAGES_PER_GPU
                 if b >= batch_size:
-                    inputs = [batch_images, batch_image_meta,
-                              batch_gt_class_ids, batch_gt_boxes, batch_gt_masks]
+                    inputs = [batch_images, batch_image_meta, batch_gt_class_ids, batch_gt_boxes, batch_gt_masks]
                     outputs = []
                     yield inputs, outputs
                     # start a new batch
@@ -334,10 +347,8 @@ class IMDB(object):
 
             except GeneratorExit:
                 raise Warning('数据生成器异常！')
-
             except KeyboardInterrupt:
                 raise Warning('键盘终止！')
-
             except:
                 # Log it and skip the image 其他异常
                 logging.exception("Error processing image {}".format(self.image_info[image_id]))
@@ -419,7 +430,13 @@ class IMDB(object):
     def resize_image(image, min_dim=None, max_dim=None, padding=False):
         """
         Resizes an image keeping the aspect ratio.
-        缩放图像，并保持形状比例
+        QQ截图：将一张图片(img)缩放并嵌入另一张图片(min, max)，并保持其原形状h/w不变。
+
+        原图h/w → 窗口图window → 新图H/W ：将原图做成一个窗口嵌入新图。
+
+        # todo ??? [min_dim, max_dim] & [max_dim, min_dim]，变换之后，原图形状不变，但新图一个宽一个高不统一？
+        应该是缩放嵌入之后，即要保证原图的形状h/W不变，也要保证新图的形状/尺寸H/W不变。就是(w对W, h对H)，
+        哪个scale能装的下，就用哪个。这样最终缩放结果使得始终有至少一个边是zero-padding对齐的，无多余padding。
 
         min_dim: if provided, resizes the image such that it's smaller
             dimension == min_dim
@@ -442,10 +459,7 @@ class IMDB(object):
         window = (0, 0, h, w)
         scale = 1
 
-        # 要么按最小边限定值缩放，要么按最大边限定值缩放
-        # 当按最小边限制值缩放时，可能超过最大边限定值，则使用最大边限定值缩放
-        # 边长最小不能小于多少，最大不能大于多少，不能同时满足时，按"大"约定走
-        # Scale ? 对w，h，scale是统一的 !
+        # 先以短边对短边的比例嵌入，若导致长边盛不下，则重新按长边对长边的比例嵌入。
         if min_dim:
             # Scale up but not down
             scale = max(1, min_dim / min(h, w))
@@ -455,9 +469,10 @@ class IMDB(object):
             if round(image_max * scale) > max_dim:
                 scale = max_dim / image_max
         # Resize image and mask
+        # 缩放之后，图像形状保持不变，round(h*scale)/round(w*scale)=h/w，因此对w和h，scale必须是统一的。
         if scale != 1:
             image = scipy.misc.imresize(image, (round(h * scale), round(w * scale)))
-        # Need padding?
+        # Need padding? 先缩放再平移
         if padding:
             # Get new height and width
             h, w = image.shape[:2]
@@ -467,14 +482,14 @@ class IMDB(object):
             right_pad = max_dim - w - left_pad
             padding = [(top_pad, bottom_pad), (left_pad, right_pad), (0, 0)]
             image = np.pad(image, padding, mode='constant', constant_values=0)
-            window = (top_pad, left_pad, h + top_pad, w + left_pad)
+            window = (top_pad, left_pad, h + top_pad, w + left_pad)  # h = bottom - top + 1, 约定右下角坐标自带+1
         return image, window, scale, padding
 
     @staticmethod
     def resize_bbox(bbox, scale, padding):
         # [N, (y1, x1, y2, x2)]
         # + top_pad   + left_pad
-        bbox = np.round(bbox*scale)
+        bbox = np.round(bbox * scale)
         bbox[:, 0] += padding[0][0]
         bbox[:, 2] += padding[0][0]
         bbox[:, 1] += padding[1][0]
@@ -581,7 +596,8 @@ class IMDB(object):
             if horizontal_indicies.shape[0]:
                 x1, x2 = horizontal_indicies[[0, -1]]
                 y1, y2 = vertical_indicies[[0, -1]]
-                # x2 and y2 should not be part of the box. Increment by 1.  #todo??? over border?
+                # x2 and y2 should not be part of the box. Increment by 1.
+                # 在 cocoapi, coco.loadRes()中默认了(x2=x1+w, y2=y1+h)，所以要+1
                 x2 += 1
                 y2 += 1
             else:

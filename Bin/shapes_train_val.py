@@ -19,7 +19,6 @@ from Configs.config import ShapesConfig
 from Models.hot_rcnn import HotRCNN
 from Utils import utils, visualize
 
-
 #######################
 #      路径配置
 #######################
@@ -37,7 +36,6 @@ backbone_name = 'resnet50-19c8e357.pth'
 backbone_path = os.path.join(backbone_dir, backbone_name)
 hotrcnn_path = None
 
-
 #######################
 #      模型训练
 #######################
@@ -50,7 +48,6 @@ config.BACKBONE_DIR = backbone_dir
 config.BACKBONE_PATH = backbone_path
 config.display()
 
-
 # Training dataset
 dataset_train = ShapesDataset(config)
 dataset_train.load_shapes(500, config.IMAGE_SHAPE[0], config.IMAGE_SHAPE[1])
@@ -61,14 +58,12 @@ dataset_val = ShapesDataset(config)
 dataset_val.load_shapes(50, config.IMAGE_SHAPE[0], config.IMAGE_SHAPE[1])
 dataset_val.prepare()
 
-
 # Load and display random samples
 image_ids = np.random.choice(dataset_train.image_ids, 2)
 for image_id in image_ids:
     image = dataset_train.load_image(image_id)
     mask, class_ids = dataset_train.load_mask(image_id)
     # visualize.display_top_masks(image, mask, class_ids, dataset_train.class_names)
-
 
 # Create model in training mode
 model = HotRCNN(config=config)
@@ -81,9 +76,9 @@ init_with = "ckpt"
 # 3. 半训练加载：从最近的训练节点加载一个半成品hrcnn模型
 if init_with == 'backbone':  # 1
     model_path = model.get_backone_path()
-elif init_with == 'hrcnn':   # 2
+elif init_with == 'hrcnn':  # 2
     model_path = model.get_weights_path('hrcnn', path='')
-elif init_with == 'ckpt':    # 3
+elif init_with == 'ckpt':  # 3
     model_path = model.get_ckpt_path()[1]
 else:
     model_path = None
@@ -94,7 +89,6 @@ model.load_weights(filepath=model_path, source=init_with)
 
 if config.GPU_COUNT > 0:
     model.cuda()
-
 
 # how to set epochs: di zeng !!!
 # fang bian restart from ckpt !!!
@@ -141,8 +135,9 @@ class InferenceConfig(ShapesConfig):
     EXP_DIR = exp_dir
     DETECTION_MIN_CONFIDENCE = 0.2
 
-inference_config = InferenceConfig()
 
+inference_config = InferenceConfig()
+dataset_test = dataset_val
 # Recreate the model in inference mode
 model = HotRCNN(config=inference_config)
 
@@ -160,81 +155,42 @@ if config.GPU_COUNT > 0:
     model.cuda()
 
 # Test on a random image
-image_id = np.random.choice(dataset_val.image_ids)
-original_image, image_meta, gt_class_id, gt_bbox, gt_mask = \
-    ShapesDataset.load_image_gt(dataset_val, image_id, inference_config)
+image_id = np.random.choice(dataset_test.image_ids)
+image, image_meta, gt_class_id, gt_bbox, gt_mask = dataset_test.load_image_gt(image_id, inference_config)
 
-utils.log("original_image", original_image)
+utils.log("original_image", image)
 utils.log("image_meta", image_meta)
 utils.log("gt_class_id", gt_class_id)
 utils.log("gt_bbox", gt_bbox)
 utils.log("gt_mask", gt_mask)
 
-visualize.display_instances(original_image, gt_bbox, gt_mask, gt_class_id, dataset_train.class_names, figsize=(8, 8))
+visualize.display_instances(image, gt_bbox, gt_mask, gt_class_id,
+                            dataset_train.class_names, figsize=(8, 8))
 
-
-results = model.detect([original_image])
+results = model.detect(images=image[np.newaxis, :], metas=image_meta[np.newaxis, :])
 
 r = results[0]  # 只有一张图片，一个检测结果
-visualize.display_instances(original_image, r['rois'], r['masks'], r['class_ids'],
-                            dataset_val.class_names, r['scores'], ax=utils.get_ax())
+visualize.display_instances(image, r['rois'], r['masks'], r['class_ids'],
+                            dataset_test.class_names, r['scores'], ax=utils.get_ax())
 
+# 测试任意无GT-info图像
+image = dataset_test.load_image(image_id)
+results = model.detect([image])
 
 # Compute VOC-Style mAP @ IoU=0.5
 # Running on 10 images. Increase for better accuracy.
-image_ids = np.random.choice(dataset_val.image_ids, 10)
+image_ids = np.random.choice(dataset_test.image_ids, 10)
 APs = []
 for image_id in image_ids:
     # Load image and ground truth data
-    image, image_meta, gt_class_id, gt_bbox, gt_mask = \
-        ShapesDataset.load_image_gt(dataset_val, image_id, inference_config)
-    molded_images = np.expand_dims(ShapesDataset.mold_image(image, inference_config.MEAN_PIXEL), 0)
+    image, image_meta, gt_class_id, gt_bbox, gt_mask = dataset_test.load_image_gt(image_id, inference_config)
     # Run object detection
-    results = model.detect([image])
+    results = model.detect(images=np.stack([image]), metas=np.stack([image_meta]))
     r = results[0]
     # Compute AP
     AP, precisions, recalls, overlaps = \
-        utils.compute_ap(gt_bbox, gt_class_id,
-                         r["rois"], r["class_ids"], r["scores"])
+        utils.compute_ap(gt_bbox, gt_class_id, r["rois"], r["class_ids"], r["scores"])
     APs.append(AP)
+
 mAP = np.mean(APs)
 print("mAP: ", mAP)
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-

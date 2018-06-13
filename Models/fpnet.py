@@ -10,30 +10,30 @@ import math
 import torch.nn.functional as F
 
 
-class FPN(nn.Module):
-    def __init__(self, channels):
-        super(FPN, self).__init__()
-        self.out_channels = channels
+class FPNet(nn.Module):
+    def __init__(self, indepth, outdepth):
+        super(FPNet, self).__init__()
+        indepth = np.sort(np.array(indepth))    # [256,512,1024,2048]
         self.P6 = nn.MaxPool2d(kernel_size=1, stride=2)
-        self.P5_conv1 = nn.Conv2d(2048, self.out_channels, kernel_size=1, stride=1)
+        self.P5_conv1 = nn.Conv2d(indepth[3], outdepth, kernel_size=1, stride=1)
         self.P5_conv2 = nn.Sequential(
             SamePad2d(kernel_size=3, stride=1),
-            nn.Conv2d(self.out_channels, self.out_channels, kernel_size=3, stride=1),
+            nn.Conv2d(outdepth, outdepth, kernel_size=3, stride=1),
         )
-        self.P4_conv1 = nn.Conv2d(1024, self.out_channels, kernel_size=1, stride=1)
+        self.P4_conv1 = nn.Conv2d(indepth[2], outdepth, kernel_size=1, stride=1)
         self.P4_conv2 = nn.Sequential(
             SamePad2d(kernel_size=3, stride=1),
-            nn.Conv2d(self.out_channels, self.out_channels, kernel_size=3, stride=1),
+            nn.Conv2d(outdepth, outdepth, kernel_size=3, stride=1),
         )
-        self.P3_conv1 = nn.Conv2d(512, self.out_channels, kernel_size=1, stride=1)
+        self.P3_conv1 = nn.Conv2d(indepth[1], outdepth, kernel_size=1, stride=1)
         self.P3_conv2 = nn.Sequential(
             SamePad2d(kernel_size=3, stride=1),
-            nn.Conv2d(self.out_channels, self.out_channels, kernel_size=3, stride=1),
+            nn.Conv2d(outdepth, outdepth, kernel_size=3, stride=1),
         )
-        self.P2_conv1 = nn.Conv2d(256, self.out_channels, kernel_size=1, stride=1)
+        self.P2_conv1 = nn.Conv2d(indepth[0], outdepth, kernel_size=1, stride=1)
         self.P2_conv2 = nn.Sequential(
             SamePad2d(kernel_size=3, stride=1),
-            nn.Conv2d(self.out_channels, self.out_channels, kernel_size=3, stride=1),
+            nn.Conv2d(outdepth, outdepth, kernel_size=3, stride=1),
         )
 
     def forward(self, feature_maps):

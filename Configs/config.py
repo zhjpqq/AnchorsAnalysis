@@ -9,26 +9,34 @@ import sys
 
 
 class Config(object):
+    # 数据集名称，coco/voc...
+    NAME = None
 
-    # 当前数据集/实验的名称
-    NAME = 'coco'
+    # 实验路径
+    # ROOT_DIR/EXP_DIR/LOG_DIR/xxx.ckpt
+    # 比如： HRCNN/ Experiments/coco_exp/ coco_exp_1/xxx.ckpt
+    ROOT_DIR = None
+    EXP_DIR = None
+    LOG_DIR = None
 
-    # dang qian shiyan de lujin
-    EXP_DIR = ''
+    # ######################################################
+    #    GPU 参数
+    # ######################################################
 
-    # GPU 数量
     GPU_COUNT = 1
 
     IMAGES_PER_GPU = 2
 
-    # 骨干网络参数
-    BACKBONE_ARCH = ['resnet50', 'resnet101', 'resnext101', 'vgg16'][0]
-
+    # ######################################################
+    #    Backbone 参数
+    # ######################################################
     BACKBONE_DIR = None
 
-    BACKBONE_PATH = None    # 'point to Backbones file path'
+    BACKBONE_NAME = None
 
-    BACKBONE_PreTRAINED = False    # True will auto download & load
+    BACKBONE_ARCH = None  # 'resnet50', 'resnet101', 'resnext101', 'vgg16'
+
+    BACKBONE_INIT = False  # True will auto download & load weights when create backone
 
     # Backone Stages :
     # [image/1024 -->> conv1/bn1/relu->512, maxpool->256, layer1->256, layer2->128, layer3->64, layer4->32, avgpool->26]
@@ -41,40 +49,53 @@ class Config(object):
     # stage6/39.38/avgpool] fixed strides of resnet
 
     # in fpn, stage 6 is downsample from stage5 by 1/2!
-    BACKBONE_INCLUDE = ['conv1', 'bn1', 'relu', 'maxpool', 'layer1', 'layer2', 'layer3', 'layer4', 'avgpool', 'fc'][0:-5]
+    BACKBONE_INCLUDE = None  # 指定可作为特征提取器使用的layer
 
-    BACKBONE_STRIDES = [2, 4, 8, 16, 32, 64]
+    BACKBONE_STRIDES = [2, 4, 8, 16, 32, 64]  # 输出特征图相对于原图的尺寸比例
 
-    # 特征融合参数
-    FEATURE_FUSION_METHOD = ['fpn', 'lsc', 'ssd', 'simple', 'none'][4]
+    BACKBONE_CHANNELS = [32, 64, 128, 256, 512, 1024, 2048]  # 输出特征图的通道数
 
-    FEATURE_FUSION_LEVELS = [1, 5][0]   # 融合之后的特征层级数
+    BACKBONE_SHAPES = None  # = IMAGE_SHAPE/BACKBONE_STRIDES
 
-    FEATURE_FUSION_CHANNELS = 256      # 融合之后的特征通道数
+    # ######################################################
+    #   Feature Fusion 参数，控制特征融合
+    # ######################################################
+    # fpn: channel 改变
+    # lsc: channel shapes 改变
 
-    # same to Backbone strides
-    FEATURE_FUSION_STRIDES = 1/np.array([2, 4, 8, 16, 32, 64])[4]    # 融合之后原图与特征图的尺寸比
+    FUSION_METHOD = ['fpn', 'lsc', 'ssd', 'simple', 'none'][4]
 
-    # FPN
+    FUSION_LEVELS = [1, 5][0]  # 融合之后的特征级数
 
-    # LSC
-    LSC_IN_CHANNELS = 2048
-    LSC_OUT_CHANNELS = FEATURE_FUSION_CHANNELS
+    FUSION_CHANNELS_IN = BACKBONE_CHANNELS  # 融合之前的特征通道数
+
+    FUSION_CHANNELS_OUT = 256  # 融合之后的特征通道数
+
+    FUSION_STRIDES = np.array(BACKBONE_STRIDES)[4]  # 融合之后原图与特征图的尺寸比    # same to Backbone strides
+
+    FUSION_SHAPES = None
+
+    # FPN 融合方案
+
+    # LSC 融合方案
     LSC_KERNEL_SIZE = 16
 
-    # # # 图片输入参数 # # #
+    # ######################################################
+    #     DataSet参数， 控制数据加载/预处理
+    # ######################################################
     CLASSES_NUMS = 1 + 0
 
     # resnet backbone for imagenet is (224, 224)
+    # todo??? shape=[MIN, MAX] or [MAX, MIN]
     IMAGE_MIN_DIM = 800
 
     IMAGE_MAX_DIM = 1024
 
+    IMAGE_SHAPE = np.array([IMAGE_MIN_DIM, IMAGE_MAX_DIM, 3])
+
     IMAGE_PADDING = True
 
     MEAN_PIXEL = np.array([123.7, 116.8, 103.9])
-
-    # # # 图片扩增参数 # # #
 
     TRAIN_AUGMENT = True
 
@@ -88,7 +109,10 @@ class Config(object):
 
     TRAIN_VAL_SHUFFLE = True
 
-    # # # 训练/验证参数 # # #
+    # ######################################################
+    #      BP参数， 控制反向传播
+    # ######################################################
+
     TRAIN_STEPS_PER_EPOCH = 1000
 
     VAL_STEPS_PER_EPOCH = 50
@@ -99,50 +123,51 @@ class Config(object):
 
     WEIGHT_DECAY = 0.0001
 
-    # # # Anchors-Proposals-Rois 检测参数 # # #
+    # ######################################################
+    #      GT-Class-ID    GT-BBox  GT-MASK
+    # ######################################################
 
-    # 关于不同阶段的数量
-    # Anchors → Proposals → ROIS → Train_ROIs → { +ROIs, -ROIs }
-    # 保持正负样本比例不变
+    MAX_GT_INSTANCES = 100  # 每张图片上允许的最多GT实例
 
-    # 每张图片上的 锚点框/建议区/兴趣区/GT区 的最大限制
-    # ANCHORS_PER_IMAGE = Anchors x len(scales) x len(ratios) - zero_area_boxes
-    ANCHORS_PER_IMAGE = 1000        # 基于点热度
+    USE_MINI_MASK = False
 
-    PROPOSALS_PER_IMAGE = 1000      # 基于领域热度
+    MINI_MASK_SHAPE = (56, 56)  # (height, width) of the mini-mask
 
-    TRAIN_ROIS_PER_IMAGE = 200      # 所有用于训练的RoIs
+    # ######################################################
+    #           Anchors
+    # ######################################################
 
-    ROIS_POSITIVE_RATIO = 0.33      # 其中正样本占的比例
+    # 每张图片上的Anchors参数 由(level, Loc, Scale, Ratio)决定
 
-    MAX_GT_INSTANCES = 100      # 只用于datagenerator中，指明gt的数量
+    ANCHORS_PER_IMAGE = 1000
 
-    # MAX_GT_INSTANCES < TRAIN_ROIS_PER_IMAGE ?? 100 < 200*0.33=66
-
-    # Bbox精调标准差
-    BBOX_STD_DEV = np.array([0.1, 0.1, 0.2, 0.2])
-
-    # 每张图片上的Anchors参数
-    # (Loc, Scale, Ratio)
-    # ANCHOR_COUNTS = 500  # 就是 ANCHORS_PER_IMAGE
-
-    # [(32, 64, 128, 256, 512), (32, 64, 128, 256), (32, 64, 128), (32, 64), (32,)]
     ANCHOR_SCALES = (32, 64, 128, 256, 512)
 
-    ANCHOR_ASPECTS = [1/2, 1, 2]
+    ANCHOR_ASPECTS = [1 / 2, 1, 2]
 
-    ANCHOR_LEVEL_NUMS = [1, 5][0]        # 锚点位于几个level的金字塔上，多个level的时候与Scales相等
+    ANCHOR_STRIDE = 1  # 锚点生成间隔，每隔几个点生成一个锚点，控制锚点的稀疏/密集程度
 
-    ANCHOR_HEAT_METHOD = ['accumulate', 'separable', 'window'][0]  # 热度值统计方法
+    ANCHOR_LEVELS = FUSION_LEVELS  # 锚点位于几个level的金字塔上，多个level的时候与Scales相等
 
-    ANCHOR_ZERO_AREA = 1*1
+    ANCHOR_ZERO_AREA = 1 * 1
 
-    ANCHOR_GTBOX_IOU = (0.88, 0.88)   # (positive, negetive)
+    ANCHOR_GTBOX_IOU = (0.7, 0.5)  # (positive, negetive), deprecated, replaced by ROIS_GTBOX_IOU
 
-    # class-bbox-mask 头
-    CLASS_BBOX_METHOD = ['mask-rcnn', 'light-head'][0]
+    # ######################################################
+    #           Proposals
+    # ######################################################
+    PROPOSALS_PER_IMAGE = 1000
 
-    MASK_HEAD_METHOD = ['mask-rcnn', 'light-head'][0]
+    # ######################################################
+    #           ROIs & ROI-Target & ROI-Transform
+    # ######################################################
+    TRAIN_ROIS_PER_IMAGE = 500  # 所有用于训练的RoIs
+
+    ROIS_POSITIVE_RATIO = 0.33  # 其中正样本占的比例
+
+    ROIS_GTBOX_IOU = (0.88, 0.60)  # ROI与GTbox的交叠阈值，判断±ROIs  (positive MAX threshold, negetive MIN threshold)
+
+    BBOX_STD_DEV = np.array([0.1, 0.1, 0.2, 0.2])
 
     BBOX_POOL_SIZE = (7, 7)
 
@@ -150,59 +175,86 @@ class Config(object):
 
     MASK_SHAPE = [28, 28]
 
-    # 是否使用mini mask
-    USE_MINI_MASK = False
+    # ######################################################
+    #          Class - BBOX - Mask
+    # ######################################################
 
-    MINI_MASK_SHAPE = (56, 56)  # (height, width) of the mini-mask
+    CLASS_BBOX_METHOD = ['mask-rcnn', 'light-head'][0]
 
-    # 每张图片的备选检出量
-    # 再经由下面的CONFINDENCE过滤之后，即得到每张图片上的最终检出结果
+    MASK_HEAD_METHOD = ['mask-rcnn', 'light-head'][0]
+
+    # ######################################################
+    #           Detections 参数
+    # ######################################################
+    # 每张图片允许的最大检出量
     DETECTION_MAX_INSTANCES = 100
 
     # 接受一个ROIs的最小置信概率，低于此值将被略过
     # 用于过滤proposals → refine_detections()
     DETECTION_MIN_CONFIDENCE = 0.7
 
-    # 对detections进行非极大值抑制
-    # 用于过滤proposals → refine_detections()
     # 对同一类的所有检出进行非极大值抑制
+    # 用于过滤proposals → refine_detections()
     DETECTION_NMS_THRESHOLD = 0.3
 
-    # 已经训练完成的HRCNN模型的路径
-    HRCNN_MODEL_PATH = None
+    # ######################################################
+    #           Evaluation 参数
+    # ######################################################
+    HRCNN_MODEL_PATH = None  # 已经训练完成的HRCNN模型的路径
 
     def __init__(self):
 
         # train batch size
-        self.BATCH_SIZE = self.IMAGES_PER_GPU*self.GPU_COUNT
-
-        # input image shapes
-        self.IMAGE_SHAPE = np.array([self.IMAGE_MAX_DIM, self.IMAGE_MAX_DIM, 3])
+        self.BATCH_SIZE = self.IMAGES_PER_GPU * self.GPU_COUNT
 
         # backbone 各个stage的image大小
         # 1024/[4, 8, 16, 32, 64] = [256, 128, 64, 32, 16]
-        self.BACKBONE_SHAPES = np.array([[int(math.ceil(self.IMAGE_SHAPE[0] / stride)),
-                                          int(math.ceil(self.IMAGE_SHAPE[1] / stride))]
-                                         for stride in self.BACKBONE_STRIDES])
+        if type(self.BACKBONE_STRIDES) != list:
+            self.BACKBONE_STRIDES = [self.BACKBONE_STRIDES]
+        self.BACKBONE_SHAPES = np.ceil(np.array([[self.IMAGE_SHAPE[0] / stride, self.IMAGE_SHAPE[1] / stride]
+                                                 for stride in self.BACKBONE_STRIDES])).astype(np.int)
 
         # fusion map shapes
-        if not isinstance(self.FEATURE_FUSION_STRIDES, list):
-            self.FEATURE_FUSION_STRIDES = [self.FEATURE_FUSION_STRIDES]
-        self.FUSION_SHAPES = np.array([[int(math.ceil(self.IMAGE_SHAPE[0] / stride)),
-                                        int(math.ceil(self.IMAGE_SHAPE[1] / stride))]
-                                       for stride in self.FEATURE_FUSION_STRIDES])
+        if type(self.FUSION_STRIDES) != list:
+            self.FUSION_STRIDES = [self.FUSION_STRIDES]
+        self.FUSION_SHAPES = np.ceil(np.array([[self.IMAGE_SHAPE[0] / stride, self.IMAGE_SHAPE[1] / stride]
+                                               for stride in self.FUSION_STRIDES])).astype(np.int)
+
+        if self.BACKBONE_ARCH.startwith('resnet'):
+            self.BACKBONE_INCLUDE = ['conv1', 'bn1', 'relu', 'maxpool', 'layer1', 'layer2', 'layer3', 'layer4', 'avgpool', 'fc'][0:-5]
 
         self.check()
 
-    def check(self):
-        """"""
-        assert self.FEATURE_FUSION_LEVELS == self.ANCHOR_LEVEL_NUMS, 'assert 1'
-        assert len(self.FEATURE_FUSION_STRIDES) == self.ANCHOR_LEVEL_NUMS, 'assert 2'
+    def check(self, verbose=0):
+        """
+        FUSION 承前启后，需要对前后约束关系进行检查, Backbone & Fusion & Anchors
+        """
+        # 自约束
+        assert len(self.BACKBONE_STRIDES) == len(self.BACKBONE_CHANNELS), 'assert 2'
+        assert len(self.FUSION_STRIDES) == len(self.FUSION_SHAPES), 'assert 3'
 
-        # 融合后特征级数levels>1时，必须与anchors数量一致
-        if self.FEATURE_FUSION_LEVELS > 1:
-            assert self.FEATURE_FUSION_LEVELS == len(self.ANCHOR_SCALES), 'assert 5'
-            assert self.FEATURE_FUSION_METHOD in ['fpn', 'ssd'], 'assert 6'
+        # 关联约束
+        if self.FUSION_LEVELS == 1:
+            # fusion & backbone 约束
+            assert self.FUSION_LEVELS == len(self.BACKBONE_CHANNELS), 'assert'
+            assert self.FUSION_LEVELS == len(self.BACKBONE_STRIDES), 'assert'
+            # fusion & 自身约束
+            assert self.FUSION_LEVELS == len(self.FUSION_STRIDES), 'assert 2'
+            assert self.FUSION_METHOD in ['simple', 'none'], 'assert 6'
+            # fusion & ANCHORS 约束
+            assert self.FUSION_LEVELS == self.ANCHOR_LEVELS, 'assert 1'
+
+        elif self.FUSION_LEVELS > 1:
+            # fusion & backbone 约束
+            assert self.FUSION_LEVELS == len(self.BACKBONE_CHANNELS), 'assert'
+            assert self.FUSION_LEVELS == len(self.BACKBONE_STRIDES), 'assert'
+            # fusion & 自身约束
+            assert self.FUSION_LEVELS == len(self.FUSION_STRIDES), 'assert 2'
+            assert self.FUSION_METHOD in ['fpn', 'ssd'], 'assert 6'
+            # fusion & ANCHORS 约束
+            assert self.FUSION_LEVELS == self.ANCHOR_LEVELS, 'assert 1'
+            assert self.FUSION_LEVELS == len(self.ANCHOR_SCALES), 'assert 5'
+
         return True
 
     def display(self):
@@ -234,8 +286,8 @@ class ShapesConfig(Config):
 
     # Use small images for faster training. Set the limits of the small side
     # the large side, and that determines the image shape.
-    IMAGE_MIN_DIM = 1024    #224
-    IMAGE_MAX_DIM = 1024    #224
+    IMAGE_MIN_DIM = 1024  # 224
+    IMAGE_MAX_DIM = 1024  # 224
 
     # Reduce training ROIs per image because the images are small and have
     # few objects. Aim to allow ROI sampling to pick 33% positive ROIs.

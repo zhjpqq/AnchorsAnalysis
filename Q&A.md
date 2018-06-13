@@ -25,3 +25,4 @@ fei chang rong yu !
 4. x2 and y2 should not be part of the box. Increment by 1.  
     todo??? over border?
     
+5. Conv(padding=Same)   SamePad2d()

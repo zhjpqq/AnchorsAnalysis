@@ -75,19 +75,17 @@ def evaluate_coco(model, dataset, coco, eval_type="bbox", limit=0, image_ids=Non
     results = []
     for i, image_id in enumerate(image_ids):
         # Load image
-        # 加载图片
-        image = dataset.load_image(image_id)
+        image = CocoDataset.load_image(image_id)
 
-        # Run detection
-        # 运行检测，只送入了一张图片[image],所以检测结果也是一个result=[result][0]
+        # Run detection, 运行检测, 只送入了一张图片[image], 所以检测结果也是一个result=[result][0]
         t = time.time()
         r = model.detect([image], verbose=0)[0]
         t_prediction += (time.time() - t)
 
         # Convert results to COCO format
         # 一张图片上的检测结果包含 [rois, class_ids, scores, masks]
-        image_results = dataset.build_coco_results(coco_image_ids[i:i + 1],
-                                                   r["class_ids"], r["scores"], r["rois"], r["masks"])
+        image_results = CocoDataset.build_results(coco_image_ids[i:i + 1],
+                                                  r["class_ids"], r["scores"], r["rois"], r["masks"])
         results.extend(image_results)
 
     # Load results. This modifies results with additional attributes.
