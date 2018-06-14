@@ -113,9 +113,12 @@ def refine_detections(rois, probs, deltas, window, config):
     refined_rois = torch.round(refined_rois)
 
     # TODO: Filter out boxes with zero area
-    none_zero = np.logical_and(refined_rois[:, 1] > refined_rois[:, 0],
-                               refined_rois[:, 3] > refined_rois[:, 2])
-    refined_rois = refined_rois[torch.from_numpy(np.where(none_zero)[0]).long().cuda(), :]
+    none_zero = np.logical_and(refined_rois[:, 2].data > refined_rois[:, 0].data,
+                               refined_rois[:, 3].data > refined_rois[:, 1].data)
+    none_zero = np.where(none_zero)[0]
+    if none_zero.shape[0] > 0:
+        none_zero = Variable(torch.from_numpy(none_zero).long().cuda(), requires_grad=False)
+        refined_rois = refined_rois[none_zero, :]
 
     # Filter out background boxes
     keep_bool = class_ids > 0  # shape: N
@@ -162,7 +165,10 @@ def refine_detections(rois, probs, deltas, window, config):
 
         # 每个类可能有多个ROIS，即在keep中有多个索引值，NMS对这些索引值进行进一步剔除，得到每个类应该保留的索引值：class_keep。
         # 将所有类的保留索引值class_keep，连续存放在nms_keep中，并进行unique操作，保证索引不重复！
-        nms_keep = utils.unique1d(torch.cat((nms_keep, class_keep)))
+        if i == 0:
+            nms_keep = class_keep
+        else:
+            nms_keep = utils.unique1d(torch.cat((nms_keep, class_keep), dim=0))
 
     # 对 keep 和 nms_keep 求交集
     keep = utils.intersect1d(keep, nms_keep)
@@ -262,7 +268,7 @@ def pyramid_detection_layer(rois, class_probs, bbox_deltas, image_metas, normali
         all_detections, all_boxes = batch_detection_layer(config, rois[0], class_probs,
                                                           bbox_deltas, image_metas, normalized)
 
-        return all_detections, all_boxes
+        return [all_detections], [all_boxes]
 
     elif len(rois) > 1:
 

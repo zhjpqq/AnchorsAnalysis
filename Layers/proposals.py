@@ -31,13 +31,13 @@ class HotProposalLayer(nn.Module):
         all_proposals = []
 
         # 单层特征图，单层锚点框，对应输出
-        if self.levels == 1:
-            proposals = self.simple_heat_filter(anchors, feature_maps[0], self.counts)
+        if self.levels == 1 and len(feature_maps) == 1 and len(anchors) == 1:
+            proposals = self.simple_heat_filter(anchors[0], feature_maps[0], self.counts)
             all_proposals.append(proposals)  # shape: [[batch, top-k, (y1, x1, y2, x2)]]
 
         # 多层特征图，单层锚点框，综合输出
-        elif self.levels > 1:
-            proposals = self.pyramid_heat_filter(anchors, feature_maps, self.counts)
+        elif self.levels > 1 and len(feature_maps) > 1 and len(anchors) == 1:
+            proposals = self.pyramid_heat_filter(anchors[0], feature_maps, self.counts)
             all_proposals.append(proposals)
 
         # 多层特征图，多层锚点框，并行输出
@@ -66,6 +66,7 @@ class HotProposalLayer(nn.Module):
         fmap = torch.mean(torch.mean(feature_map, 2, True), 3, True)
         fmap = torch.abs(feature_map - fmap)
         fmap = torch.sum(fmap, 1)
+        feature_map = None
 
         # 映射归一化锚点到特征图尺寸的锚点
         stride = torch.from_numpy(np.array([fmap.size(1), fmap.size(2), fmap.size(1), fmap.size(2)])).float().cuda()

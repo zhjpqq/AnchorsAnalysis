@@ -11,9 +11,10 @@ import torch.nn.functional as F
 
 
 class FPNet(nn.Module):
-    def __init__(self, indepth, outdepth):
+    def __init__(self, indepth, outdepth, stages):
         super(FPNet, self).__init__()
         indepth = np.sort(np.array(indepth))    # [256,512,1024,2048]
+        self.stages = stages
         self.P6 = nn.MaxPool2d(kernel_size=1, stride=2)
         self.P5_conv1 = nn.Conv2d(indepth[3], outdepth, kernel_size=1, stride=1)
         self.P5_conv2 = nn.Sequential(

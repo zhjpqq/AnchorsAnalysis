@@ -32,7 +32,8 @@ def generate_anchors(scales, ratios, anchor_stride, feature_shape, feature_strid
     heights = scales / np.sqrt(ratios)
     widths = scales * np.sqrt(ratios)
 
-    # Enumerate shifts in feature space     # todo ??? 相对原图每隔多少一个点
+    # Enumerate shifts in feature space
+    # 相对原图间隔为 anchor_stride*feature_stride
     shifts_y = np.arange(0, feature_shape[0], anchor_stride) * feature_stride
     shifts_x = np.arange(0, feature_shape[1], anchor_stride) * feature_stride
     shifts_x, shifts_y = np.meshgrid(shifts_x, shifts_y)
@@ -50,7 +51,7 @@ def generate_anchors(scales, ratios, anchor_stride, feature_shape, feature_strid
                             box_centers + 0.5 * box_sizes], axis=1)
 
     # 归一化，并裁剪，0~1
-    image_shape = np.array(feature_shape[0], feature_shape[1], feature_shape[0], feature_shape[1])*feature_stride
+    image_shape = np.array([feature_shape[0], feature_shape[1], feature_shape[0], feature_shape[1]])*feature_stride
     boxes = np.clip(boxes/image_shape, 0, 1)
 
     return boxes
@@ -69,7 +70,7 @@ def generate_pyramid_anchors(scales, ratios, stride, counts, levels, zero_area, 
     parallel = False
 
     if levels == 1 and len(feature_shapes) == 1:
-        anchors = generate_anchors(scales, ratios, stride, feature_shapes, feature_strides)
+        anchors = generate_anchors(scales, ratios, stride, feature_shapes[0], feature_strides[0])
 
     elif levels > 1 and len(feature_shapes) > 1:
         # 将各层特征图上生成的anchors汇总在一起输出
@@ -83,15 +84,15 @@ def generate_pyramid_anchors(scales, ratios, stride, counts, levels, zero_area, 
         anchors = []
         for i in range(len(scales)):
             level_anchors = generate_anchors(scales[i], ratios, stride, feature_shapes[i], feature_strides[i])
-            level_anchors = Variable(torch.from_numpy(level_anchors).float(), requires_grad=False)
+            level_anchors = Variable(torch.from_numpy(level_anchors).float(), requires_grad=False).cuda()
             anchors.append(level_anchors)
         return anchors
 
     else:
         raise ValueError('Error Pyramid Levels... %s' % levels)
 
-    anchors = Variable(torch.from_numpy(anchors).float(), requires_grad=False)
-    return anchors
+    anchors = Variable(torch.from_numpy(anchors).float(), requires_grad=False).cuda()
+    return [anchors]
 
 
 class PyramidAnchorLayer(nn.Module):

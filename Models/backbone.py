@@ -13,8 +13,9 @@ import math
 class ResNet(nn.Module):
     """
     修改自 torchvision.models.resnet.ResNet
-    返回多个层级的特征图[C1, C2, C3, C4, C5], 用于构造FPN
+    返回多个stage的特征图[C1, C2, C3, C4, C5], 用于构造FPN
     """
+
     def __init__(self, block, layers, num_classes=1000):
         self.inplanes = 64
         super(ResNet, self).__init__()
@@ -58,8 +59,9 @@ class ResNet(nn.Module):
         x = self.conv1(x)
         x = self.bn1(x)
         x = self.relu(x)
-        x = self.maxpool(x)
         C1 = x
+        x = self.maxpool(x)
+        # C1 = x
         x = self.layer1(x)
         C2 = x
         x = self.layer2(x)
@@ -69,10 +71,11 @@ class ResNet(nn.Module):
         x = self.layer4(x)
         C5 = x
         # 在检测算法中不需要计算全连接层的输出x
-        # x = self.avgpool(x)
+        x = self.avgpool(x)
+        C6 = x
         # x = x.view(x.size(0), -1)
         # x = self.fc(x)
-        return [C1, C2, C3, C4, C5]
+        return [C1, C2, C3, C4, C5, C6]
 
 
 def resnet18(pretrained=False, model_dir=None, **kwargs):
@@ -157,25 +160,15 @@ def resnet(arch, pretrained=False, model_dir=None, include=None):
     else:
         raise ValueError('错误的arch代码！')
 
-    # error: OrderedDict can't be changed during iteration!!
-    # if exclude is not None:
-    #     for name, child in model.named_children():
-    #         if name in exclude:
-    #             delattr(model, name)
-    # [delattr(model, name) for name, _ in model.named_children() if name in exclude]
-    if include is not None:
-        new_model = torch.nn.Sequential()
-        [new_model.add_module(n, m) for n, m in model.named_children() if n in include]
-        model = new_model
     return model
 
 
 def vgg(arch, pretrained=False, model_dir=None, include=None):
-    pass
+    raise NotImplementedError
 
 
 def desnet(arch, pretrained=False, model_dir=None, include=None):
-    pass
+    raise NotImplementedError
 
 
 def backbone(arch, pretrained=False, model_dir=None, include=None):
@@ -187,3 +180,4 @@ def backbone(arch, pretrained=False, model_dir=None, include=None):
         return desnet(arch, pretrained, model_dir, include)
     else:
         raise ValueError('Unknown Backbone Model: %s' % arch)
+

@@ -10,7 +10,6 @@ from ._ext import crop_and_resize as _backend
 # TODO ??? 输入 返回
 
 class CropAndResizeFunction(Function):
-
     def __init__(self, crop_height, crop_width, extrapolation_value=0):
         self.crop_height = crop_height
         self.crop_width = crop_width

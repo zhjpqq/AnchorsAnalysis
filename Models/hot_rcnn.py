@@ -20,7 +20,7 @@ from Models.fpnet import FPNet
 from Models.lscnet import LSCNet
 from Layers.anchors import PyramidAnchorLayer
 from Layers.proposals import HotProposalLayer
-from Layers.rois import RoiTargetLayer
+from Layers.rois_target import RoiTargetLayer
 from Layers.class_bbox_mask import ClassBoxNet, MaskNet
 from Layers.detections import pyramid_detection_layer
 from Layers.loss import compute_losses
@@ -49,8 +49,9 @@ class HotRCNN(nn.Module):
                             "to avoid fractions when downscaling and upscaling."
                             "For example, use 256, 320, 384, 448, 512, ... etc. ")
         # 特征生成网络
-        self.backbone = backbone(arch=config.BACKBONE_ARCH, pretrained=config.BACKBONE_PreTRAINED,
-                                 model_dir=config.BACKBONE_DIR, include=config.BACKBONE_INCLUDE)
+        self.backbone = backbone(arch=config.BACKBONE_ARCH,
+                                 pretrained=config.BACKBONE_INIT,
+                                 model_dir=config.BACKBONE_DIR)
 
         # 特征融合网络
         self.fusionnet = fusionnet(method=config.FUSION_METHOD,
@@ -58,7 +59,8 @@ class HotRCNN(nn.Module):
                                    indepth=config.FUSION_CHANNELS_IN,
                                    outdepth=config.FUSION_CHANNELS_OUT,
                                    strides=config.FUSION_STRIDES,
-                                   shapes=config.FUSION_SHAPES)
+                                   shapes=config.FUSION_SHAPES,
+                                   stages=config.BACKBONE_STAGES)
 
         # Anchors生成层
         self.anchors_generate = PyramidAnchorLayer(scales=config.ANCHOR_SCALES,
@@ -69,13 +71,11 @@ class HotRCNN(nn.Module):
                                                    zero_area=config.ANCHOR_ZERO_AREA,
                                                    feature_shapes=config.FUSION_SHAPES,
                                                    feature_strides=config.FUSION_STRIDES)
-        if self.config.GPU_COUNT > 0:
-            self.anchors = self.anchors.cuda()
 
         # Proposals选择层
         self.proposals_select = HotProposalLayer(counts=config.PROPOSALS_PER_IMAGE,
                                                  image_shape=config.IMAGE_SHAPE,
-                                                 levels=config.ANCHOR_LEVEL_NUMS)
+                                                 levels=config.ANCHOR_LEVELS)
 
         # ROIs-GT匹配层，Proposal-GTbox匹配，RoiTargetLayer, 训练阶段
         self.rois_target_match = RoiTargetLayer(config=config)
@@ -89,7 +89,7 @@ class HotRCNN(nn.Module):
                                           image_shape=config.IMAGE_SHAPE,
                                           fmap_stride=config.FUSION_STRIDES,
                                           class_nums=config.CLASSES_NUMS,
-                                          level_nums=config.ANCHOR_LEVEL_NUMS)
+                                          level_nums=config.ANCHOR_LEVELS)
 
         # mask head
         self.mask_net = MaskNet(indepth=config.FUSION_CHANNELS_OUT,
@@ -97,7 +97,7 @@ class HotRCNN(nn.Module):
                                 image_shape=config.IMAGE_SHAPE,
                                 fmap_stride=config.FUSION_STRIDES,
                                 class_nums=config.CLASSES_NUMS,
-                                level_nums=config.ANCHOR_LEVEL_NUMS)
+                                level_nums=config.ANCHOR_LEVELS)
 
         # detection results
         self.detection_layer = pyramid_detection_layer
@@ -141,9 +141,10 @@ class HotRCNN(nn.Module):
         # fmaps = [P2, P3, P4, P5, P6]
         fmaps = self.fusionnet(fmaps)
 
+        # anchors = [[N,y1,x1,y2,x2],...]
         anchors = self.anchors_generate()
 
-        # [batch, N, (y2, x2, y1, x1)]
+        # [[batch, N, (y2, x2, y1, x1)],...]
         proposals = self.proposals_select(fmaps, anchors)
 
         if mode == 'training':
@@ -155,7 +156,7 @@ class HotRCNN(nn.Module):
             rois, target_class_ids, target_deltas, target_masks = \
                 self.rois_target_match(proposals, gt_class_ids, gt_boxes, gt_masks)
 
-            if rois.size(0):
+            if rois[0].size(0):
                 # fmaps & rois 的 level_nums 相对应
                 class_logits, class_probs, pred_deltas = self.class_bbox_net(fmaps, rois)
                 pred_masks = self.mask_net(fmaps, rois)
@@ -172,20 +173,20 @@ class HotRCNN(nn.Module):
 
         elif mode == 'inference':
 
-            # proposals ：[[batch, N, (y1, x1, y2, x2), ., ...]]
+            # proposals ：[[batch, N, (y1, x1, y2, x2)]..., ...]
             rois = proposals
 
             class_logits, class_probs, pred_deltas = self.class_bbox_net(fmaps, rois)
 
             # Detections
-            # detections: [batch, num_detections, (y1, x1, y2, x2, class_id, score)] in image coordinates
-            # allboxes: [batch, num_detections, (y1, x1, y2, x2)] in image/normalized coodinates
-            detections, allboxes = self.detection_layer(rois, class_probs, pred_deltas, image_metas, True, self.config)
+            # detections: [[batch, num_detections, (y1, x1, y2, x2, class_id, score)],...] in image coordinates
+            # boxes: [[batch, num_detections, (y1, x1, y2, x2)],...] in image/normalized coodinates
+            detections, boxes = self.detection_layer(rois, class_probs, pred_deltas, image_metas, True, self.config)
 
             # Create masks for detections
             # pred_masks: [b*N, class_nums, h', w'] -> [batch, num_detections, class_nums, h', w']
-            pred_masks = self.mask_net(fmaps, allboxes)
-            pred_masks = pred_masks.view(allboxes.shape[0:2] + pred_masks.shape[1:])
+            pred_masks = self.mask_net(fmaps, boxes)
+            pred_masks = pred_masks.view(boxes[0].shape[0:2] + pred_masks.shape[1:])
 
             return [detections, pred_masks]
 
@@ -209,7 +210,7 @@ class HotRCNN(nn.Module):
         if metas is None:
             molded_images, image_metas, _ = self.mold_inputs(images)
         else:
-            assert images.shape == 4 and images.shape[1] == 3
+            assert len(images.shape) == 4 and images.shape[1] == 3
             molded_images, image_metas = images, metas
 
         # Convert images to torch tensor
@@ -222,8 +223,11 @@ class HotRCNN(nn.Module):
         detections, pred_masks = self.predict([molded_images, image_metas], mode='inference')
 
         # Convert to numpy
-        detections = detections.data.cpu().numpy()
-        pred_masks = pred_masks.permute(0, 1, 3, 4, 2).data.cpu().numpy()  # -> [b, N, H, W, class_nums]
+        if type(detections) == list and len(detections) == 1:
+            detections = detections[0].data.cpu().numpy()
+            pred_masks = pred_masks.permute(0, 1, 3, 4, 2).data.cpu().numpy()  # -> [b, N, H, W, class_nums]
+        else:
+            raise NotImplementedError('multiple levels detections')
 
         # Process detections
         results = []
@@ -313,7 +317,7 @@ class HotRCNN(nn.Module):
             # Compute losses
             class_loss, bbox_loss, mask_loss = self.compute_losses(target_class_ids, class_logits,
                                                                    target_deltas, pred_deltas,
-                                                                   target_masks, pred_masks)
+                                                                   target_masks, pred_masks, config=self.config)
             loss = class_loss + bbox_loss + mask_loss
 
             # Backpropagation
@@ -357,13 +361,13 @@ class HotRCNN(nn.Module):
             target_class_ids, class_logits, target_deltas, pred_deltas, target_masks, pred_masks = \
                 self.predict([images, image_metas, gt_class_ids, gt_boxes, gt_masks], mode='training')
 
-            if not target_class_ids.size():
+            if not target_class_ids[0].size():
                 continue
 
             # Compute losses
             class_loss, bbox_loss, mask_loss = self.compute_losses(target_class_ids, class_logits,
                                                                    target_deltas, pred_deltas,
-                                                                   target_masks, pred_masks)
+                                                                   target_masks, pred_masks, self.config)
             loss = class_loss + bbox_loss + mask_loss
 
             # Progress
@@ -445,7 +449,7 @@ class HotRCNN(nn.Module):
         指定需要训练的层
         """
         # Pre-defined layer regular expressions
-        if self.config.FEATURE_FUSION_METHOD == 'fpn':
+        if self.config.FUSION_METHOD == 'fpn':
             default_layer_regex = {
                 # all layers but the backbone
                 "heads": r"(fpn.P5\_.*)|(fpn.P4\_.*)|(fpn.P3\_.*)|(fpn.P2\_.*)|"
@@ -464,7 +468,7 @@ class HotRCNN(nn.Module):
                 # All layers
                 "all": ".*",
             }
-        elif self.config.FEATURE_FUSION_METHOD in ['lsc', 'none']:
+        elif self.config.FUSION_METHOD in ['lsc', 'none']:
             default_layer_regex = {
                 # all layers but the backbone
                 "heads": r"(lscnet.*)|(class_bbox.*)|(mask.*)",
@@ -646,9 +650,7 @@ class HotRCNN(nn.Module):
         return self.epoch, self.log_dir, self.checkpoint_path
 
     def get_backone_path(self, path=None):
-        if path is not None:
-            return path
-        return self.config.BACKBONE_PATH
+        return path if path else os.path.join(self.config.BACKBONE_DIR, self.config.BACKBONE_NAME)
 
     def get_weights_path(self, dataset, path=None):
         """Downloads ImageNet trained weights from Keras.

@@ -15,13 +15,14 @@ from torch.nn.modules.utils import _pair
 from RoiTransforms.roi_align.modules.roi_align import RoIAlign, RoIAlignAvg, RoIAlignMax
 from RoiTransforms.roi_crop.modules.roi_crop import RoICropFunction
 from RoiTransforms.roi_pooling.modules.roi_pool import _RoIPooling, RoIPoolFunction
-from RoiTransforms.roi_align2.roi_align import pyramid_roi_align, parallel_roi_align
+from Layers.rois_transform import pyramid_roi_align, parallel_roi_align
 
 
 class ClassBoxNet(nn.Module):
     """
     fmap_stride: 原图到最后特征图的缩放比例
     """
+
     def __init__(self, indepth, pool_size, image_shape, fmap_stride, class_nums, level_nums):
         super(ClassBoxNet, self).__init__()
         self.indepth = indepth
@@ -31,7 +32,7 @@ class ClassBoxNet(nn.Module):
         self.fmap_stride = fmap_stride
         self.level_nums = level_nums
 
-        self.conv1 = nn.Conv2d(self.indepth, 1024, kernel_size=pool_size, stride=1)     # 全连接
+        self.conv1 = nn.Conv2d(self.indepth, 1024, kernel_size=pool_size, stride=1)  # 全连接
         self.bn1 = nn.BatchNorm2d(1024, eps=0.001, momentum=0.01)
         self.conv2 = nn.Conv2d(1024, 1024, kernel_size=1, stride=1)
         self.bn2 = nn.BatchNorm2d(1024, eps=0.001, momentum=0.01)
@@ -57,14 +58,14 @@ class ClassBoxNet(nn.Module):
         """
         # todo ??? 返回Shape: [batch×num_rois, channels, pool_height, pool_width]
 
-        if self.level_nums == 1 and len(rois) == 1:
-            rois = rois_expand(rois).view(-1, 5)    # shape: [batch*N, (batch_index, y2, x2, y1, x1)]
+        if self.level_nums == 1 and len(x) == 1 and len(rois) == 1:
+            rois = rois_expand(rois[0]).view(-1, 5)  # shape: [batch*N, (batch_index, y2, x2, y1, x1)]
             x = RoIAlignAvg(self.pool_size[0], self.pool_size[1], self.fmap_stride[0])(x[0], rois)
 
-        elif self.level_nums > 1 and len(rois) == 1:
-            x = pyramid_roi_align([rois]+x, self.pool_size, self.image_shape)
+        elif self.level_nums > 1 and len(x) > 1 and len(rois) == 1:
+            x = pyramid_roi_align(x, rois[0], self.pool_size, self.image_shape)
 
-        elif self.level_nums > 1 and len(rois) > 1:
+        elif self.level_nums > 1 and len(x) > 1and len(rois) > 1:
             # 并行计算, 多对多
             x = parallel_roi_align(x, rois, self.pool_size, self.image_shape)
 
@@ -89,7 +90,6 @@ class ClassBoxNet(nn.Module):
 
 
 class MaskNet(nn.Module):
-
     def __init__(self, indepth, pool_size, image_shape, fmap_stride, class_nums, level_nums):
         super(MaskNet, self).__init__()
         self.indepth = indepth
@@ -123,14 +123,14 @@ class MaskNet(nn.Module):
         :return
             x: [batch*N, class_nums, h', w']
         """
-        if self.level_nums == 1 and len(rois) == 1:
-            rois = rois_expand(rois).view(-1, 5)
+        if self.level_nums == 1 and len(x) == 1 and len(rois) == 1:
+            rois = rois_expand(rois[0]).view(-1, 5)
             x = RoIAlignAvg(self.pool_size[0], self.pool_size[1], self.fmap_stride[0])(x[0], rois)
 
-        elif self.level_nums > 1 and len(rois) == 1:
-            x = pyramid_roi_align([rois]+x, self.pool_size, self.image_shape)
+        elif self.level_nums > 1 and len(x) > 1 and len(rois) == 1:
+            x = pyramid_roi_align(x, rois[0], self.pool_size, self.image_shape)
 
-        elif self.level_nums > 1 and len(rois) > 1:
+        elif self.level_nums > 1 and len(x) > 1 and len(rois) > 1:
             # 并行计算
             x = parallel_roi_align(x, rois, self.pool_size, self.image_shape)
 
@@ -190,11 +190,7 @@ def rois_expand(rois):
     :return rois: [batch, N, (batch_index, y1, x1, y2, x2)] , tensor
     """
     batch, count = rois.shape[0:2]
-    expand = Variable(torch.arange(0, batch), requires_grad=False).cuda()   # shape batch
-    expand = expand.unsqueeze(-1).unsqueeze(-1).expand(batch, count, 1)     # shape batch x count x 1
+    expand = Variable(torch.arange(0, batch), requires_grad=False).cuda()  # shape batch
+    expand = expand.unsqueeze(-1).unsqueeze(-1).expand(batch, count, 1)  # shape batch x count x 1
     rois = torch.cat([expand, rois], dim=2)
     return rois
-
-
-
-

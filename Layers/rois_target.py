@@ -57,7 +57,7 @@ class RoiTargetLayer(nn.Module):
             target_deltas = torch.cat(target_deltas, dim=0)
             target_masks = torch.cat(target_masks, dim=0)
 
-            return rois, target_class_ids, target_deltas, target_masks
+            return [rois], [target_class_ids], [target_deltas], [target_masks]
 
         # self.config.FUSION_LEVELS > 1:
         elif len(proposals) > 1:
@@ -150,26 +150,32 @@ class RoiTargetLayer(nn.Module):
         # A crowd box in COCO is a bounding box around several instances. Exclude
         # them from training. A crowd box is given a negative class ID.
         # 当一个BOX围住好几个物体实例时，称为Crowdbox，将其从训练阶段排除，给予一个负标签
-        crowd_ix = Variable(torch.from_numpy(np.where(gt_class_ids.data < 0)[0]).long().cuda(), requires_grad=False)
-        non_crowd_ix = Variable(torch.from_numpy(np.where(gt_class_ids.data > 0)[0]).long().cuda(), requires_grad=False)
-
+        crowd_ix = np.where(gt_class_ids.data < 0)[0]
+        if crowd_ix:
+            crowd_ix = Variable(torch.from_numpy(crowd_ix).long().cuda(), requires_grad=False)
+            crowd_gt_boxes = torch.gather(gt_boxes, dim=0, index=crowd_ix.unsqueeze(-1).expand(crowd_ix.size(0), 4))
+        else:
+            crowd_gt_boxes = Variable(torch.FloatTensor([])).cuda()
         # crowd_gt_class_ids = torch.gather(gt_class_ids, dim=0, index=crowd_ix)
-        crowd_gt_boxes = torch.gather(gt_boxes, dim=0, index=crowd_ix.unsqueeze(-1).expand(crowd_ix.size(0), 4))
         # crowd_gt_masks = torch.gather(gt_masks, dim=2, index=crowd_ix.unsqueeze(0).unsqueeze(0)
         #                                                     .expand(gt_masks.shape[0:2] + (crowd_ix.size(0),)))
+
+        non_crowd_ix = Variable(torch.from_numpy(np.where(gt_class_ids.data > 0)[0]).long().cuda(), requires_grad=False)
         gt_class_ids = torch.gather(gt_class_ids, dim=0, index=non_crowd_ix)
         gt_boxes = torch.gather(gt_boxes, dim=0, index=non_crowd_ix.unsqueeze(-1).expand(non_crowd_ix.size(0), 4))
         gt_masks = torch.gather(gt_masks, dim=2, index=non_crowd_ix.unsqueeze(0).unsqueeze(0)
-                                                       .expand(gt_masks.shape[0:2] + (non_crowd_ix.size(0),)))
+                                .expand(gt_masks.shape[0:2] + (non_crowd_ix.size(0),)))
         crowd_ix, non_crowd_ix = None, None
 
         # 3、计算proposals和gt_boxes的Overlaps
-
         # Compute overlaps matrix [proposals, gt_boxes]
         overlaps = utils.bbox_overlaps(proposals, gt_boxes)  # shape: N×K
-        crowd_overlaps = utils.bbox_overlaps(proposals, crowd_gt_boxes)
-        crowd_iou_max = torch.max(crowd_overlaps, dim=1)[0].data
-        no_crowd_bool = (crowd_iou_max < 0.001)              # shape: N×K'
+        if crowd_gt_boxes:
+            crowd_overlaps = utils.bbox_overlaps(proposals, crowd_gt_boxes)
+            crowd_iou_max = torch.max(crowd_overlaps, dim=1)[0].data
+            no_crowd_bool = (crowd_iou_max < 0.001)  # shape: N×K'
+        else:
+            no_crowd_bool = torch.ones(proposals.shape[0]).byte().cuda()
         crowd_overlaps, crowd_iou_max = None, None
 
         # 4、判定正负ROIs
@@ -215,16 +221,17 @@ class RoiTargetLayer(nn.Module):
             roi_iou_max, roi_iou_ind = torch.sort(roi_iou_max, dim=0, descending=True)
             positive_count = int(config.TRAIN_ROIS_PER_IMAGE * config.ROIS_POSITIVE_RATIO)
             positive_indices = roi_iou_ind[0: positive_count]
-
             roi_iou_ind = roi_iou_ind[positive_count:]
             roi_iou_max = roi_iou_max[positive_count:]
             negative_count = config.TRAIN_ROIS_PER_IMAGE - positive_count
             negative_indices = roi_iou_ind[(roi_iou_max < config.ROIS_GTBOX_IOU[1]) & no_crowd_bool[roi_iou_ind]]
+            print('positive_/negative_indices.numel()---@rois_target()--:', positive_indices.numel()/negative_indices.numel())
+            vc = torch.randperm(negative_indices.numel())[0: negative_count].cuda()
             negative_indices = negative_indices[torch.randperm(negative_indices.numel())[0: negative_count].cuda()]
             roi_iou_max, roi_iou_ind, index = None, None, None
 
         elif method3:
-            roi_iou_max = torch.max(overlaps, dim=1)[0].data    # shape: N
+            roi_iou_max = torch.max(overlaps, dim=1)[0].data  # shape: N
             roi_iou_ind = torch.arange(0, roi_iou_max.shape[0]).long().cuda()  # shape: N
             positive_count = int(config.TRAIN_ROIS_PER_IMAGE * config.ROIS_POSITIVE_RATIO)
             positive_indices = roi_iou_ind[roi_iou_max > config.ROIS_GTBOX_IOU[0]]
@@ -279,7 +286,7 @@ class RoiTargetLayer(nn.Module):
         gt_masks = None
 
         # Pick the right mask for each ROI
-        index = roi_gt_box_assignment.unsqueeze(-1).unsqueeze(-1).unsqueeze(-1)              # N -> Nx1x1x1
+        index = roi_gt_box_assignment.unsqueeze(-1).unsqueeze(-1).unsqueeze(-1)  # N -> Nx1x1x1
         index = index.expand((roi_gt_box_assignment.size(0),) + transposed_masks.shape[1:])  # Nx1x1x1 -> Nx1xHxW
         roi_masks = torch.gather(transposed_masks, dim=0, index=index)
         transposed_masks, roi_gt_box_assignment, index = None, None, None
@@ -324,12 +331,3 @@ class RoiTargetLayer(nn.Module):
         deltas = F.pad(deltas, (0, 0, 0, N + P))
         masks = F.pad(masks, (0, 0, 0, 0, 0, N + P))
         return rois, roi_gt_class_ids, deltas, masks
-
-
-class RoiTransformLayer(nn.Module):
-    def __init__(self):
-        super(RoiTransformLayer, self).__init__()
-
-    def forward(self, *inputs):
-        pass
-        return inputs

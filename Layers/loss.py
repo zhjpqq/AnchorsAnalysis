@@ -19,16 +19,26 @@ from torch.autograd import Variable
 # target_class_ids: [b, N, (class_id)]      class_logits: [b*N, class_nums, (logits)]
 # target_deltas: [b, N, (dy, dx, dw, dh)]   pred_deltas: [b*N, class_nums, (dy, dx, dw, dh)]
 # target_masks: [b, N, h, w]                pred_masks: [b*N, class_nums, h', w']
-def compute_losses(target_class_ids, class_logits, target_deltas, pred_deltas, target_masks, pred_masks):
-    target_class_ids = target_class_ids.view(-1)   # shape [b, N] -> [b*N]
-    target_deltas = target_deltas.view(-1, target_deltas.size(-1))
-    target_masks = target_masks.view(-1, target_masks.size(-2), target_masks.size(-1))
+def compute_losses(target_class_ids, class_logits, target_deltas, pred_deltas, target_masks, pred_masks, config):
 
-    class_loss = compute_class_loss(target_class_ids, class_logits)
-    bbox_loss = compute_bbox_loss(target_deltas, pred_deltas, target_class_ids)
-    mask_loss = compute_mask_loss(target_masks, pred_masks, target_class_ids)
+    if config.FUSION_LEVELS == 1:
 
-    return [class_loss, bbox_loss, mask_loss]
+        target_class_ids = target_class_ids[0]
+        target_deltas = target_deltas[0]
+        target_masks = target_masks[0]
+
+        target_class_ids = target_class_ids.view(-1)   # shape [b, N] -> [b*N]
+        target_deltas = target_deltas.view(-1, target_deltas.size(-1))
+        target_masks = target_masks.view(-1, target_masks.size(-2), target_masks.size(-1))
+
+        class_loss = compute_class_loss(target_class_ids, class_logits)
+        bbox_loss = compute_bbox_loss(target_deltas, pred_deltas, target_class_ids)
+        mask_loss = compute_mask_loss(target_masks, pred_masks, target_class_ids)
+
+        return [class_loss, bbox_loss, mask_loss]
+
+    else:
+        raise NotImplementedError('Multiply Fusion Levels Detection Loss')
 
 
 def compute_class_loss(target_class_ids, pred_class_logits):

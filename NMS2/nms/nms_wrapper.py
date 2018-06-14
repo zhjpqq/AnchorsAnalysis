@@ -4,17 +4,20 @@
 # Licensed under The MIT License [see LICENSE for details]
 # Written by Ross Girshick
 # --------------------------------------------------------
-
-# https://github.com/zhjpqq/pytorch-mask-rcnn/tree/master/nms
-
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
-
-from .pth_nms import pth_nms
+import torch
+# from model.utils.config import cfg
+if torch.cuda.is_available():
+    from .nms_gpu import nms_gpu
+from .nms_cpu import nms_cpu
 
 
-def nms(dets, thresh):
-    """Dispatch to either CPU or GPU NMS implementations.
-    Accept dets as tensor"""
-    return pth_nms(dets, thresh)
+def nms(dets, thresh, force_cpu=False):
+    """Dispatch to either CPU or GPU NMS implementations."""
+    if dets.shape[0] == 0:
+        return []
+    # ---numpy version---
+    # original: return gpu_nms(dets, thresh, device_id=cfg.GPU_ID)
+    # ---pytorch version---
+
+    return nms_gpu(dets, thresh) if force_cpu == False else nms_cpu(dets, thresh)
+

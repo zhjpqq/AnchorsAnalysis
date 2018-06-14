@@ -30,11 +30,11 @@ class Config(object):
     # ######################################################
     #    Backbone 参数
     # ######################################################
-    BACKBONE_DIR = None
+    BACKBONE_DIR = '/HRCNN/Backbones'
 
-    BACKBONE_NAME = None
+    BACKBONE_NAME = 'resnet50-19c8e357.pth'
 
-    BACKBONE_ARCH = None  # 'resnet50', 'resnet101', 'resnext101', 'vgg16'
+    BACKBONE_ARCH = 'resnet50'  # 'resnet50', 'resnet101', 'resnext101', 'vgg16'
 
     BACKBONE_INIT = False  # True will auto download & load weights when create backone
 
@@ -49,13 +49,14 @@ class Config(object):
     # stage6/39.38/avgpool] fixed strides of resnet
 
     # in fpn, stage 6 is downsample from stage5 by 1/2!
-    BACKBONE_INCLUDE = None  # 指定可作为特征提取器使用的layer
-
-    BACKBONE_STRIDES = [2, 4, 8, 16, 32, 64]  # 输出特征图相对于原图的尺寸比例
-
-    BACKBONE_CHANNELS = [32, 64, 128, 256, 512, 1024, 2048]  # 输出特征图的通道数
-
+    # this is the settings for resnet50 / resnet101 .
     BACKBONE_SHAPES = None  # = IMAGE_SHAPE/BACKBONE_STRIDES
+
+    BACKBONE_STRIDES = [2, 4, 8, 16, 32, None][3]  # 输出特征图相对于原图的尺寸比例, None:fc handle of C6
+
+    BACKBONE_CHANNELS = [64, 256, 512, 1024, 2048, None][3]       # 输出特征图的通道数
+
+    BACKBONE_STAGES = ['C1', 'C2', 'C3', 'C4', 'C5', 'C6'][3]     # feature maps of stage
 
     # ######################################################
     #   Feature Fusion 参数，控制特征融合
@@ -69,9 +70,9 @@ class Config(object):
 
     FUSION_CHANNELS_IN = BACKBONE_CHANNELS  # 融合之前的特征通道数
 
-    FUSION_CHANNELS_OUT = 256  # 融合之后的特征通道数
+    FUSION_CHANNELS_OUT = 1024  # 融合之后的特征通道数
 
-    FUSION_STRIDES = np.array(BACKBONE_STRIDES)[4]  # 融合之后原图与特征图的尺寸比    # same to Backbone strides
+    FUSION_STRIDES = BACKBONE_STRIDES  # 融合之后原图与特征图的尺寸比    # same to Backbone strides
 
     FUSION_SHAPES = None
 
@@ -161,11 +162,11 @@ class Config(object):
     # ######################################################
     #           ROIs & ROI-Target & ROI-Transform
     # ######################################################
-    TRAIN_ROIS_PER_IMAGE = 500  # 所有用于训练的RoIs
+    TRAIN_ROIS_PER_IMAGE = 800  # 所有用于训练的RoIs
 
     ROIS_POSITIVE_RATIO = 0.33  # 其中正样本占的比例
 
-    ROIS_GTBOX_IOU = (0.88, 0.60)  # ROI与GTbox的交叠阈值，判断±ROIs  (positive MAX threshold, negetive MIN threshold)
+    ROIS_GTBOX_IOU = (0.88, 0.77)  # ROI与GTbox的交叠阈值，判断±ROIs  (positive MAX threshold, negetive MIN threshold)
 
     BBOX_STD_DEV = np.array([0.1, 0.1, 0.2, 0.2])
 
@@ -207,21 +208,33 @@ class Config(object):
         # train batch size
         self.BATCH_SIZE = self.IMAGES_PER_GPU * self.GPU_COUNT
 
-        # backbone 各个stage的image大小
-        # 1024/[4, 8, 16, 32, 64] = [256, 128, 64, 32, 16]
+        if type(self.BACKBONE_STAGES) != list:
+            self.BACKBONE_STAGES = [self.BACKBONE_STAGES]
+
+        if type(self.BACKBONE_CHANNELS) != list:
+            self.BACKBONE_CHANNELS = [self.BACKBONE_CHANNELS]
+
         if type(self.BACKBONE_STRIDES) != list:
             self.BACKBONE_STRIDES = [self.BACKBONE_STRIDES]
+
+        if type(self.FUSION_STRIDES) != list:
+            self.FUSION_STRIDES = [self.FUSION_STRIDES]
+
+        if type(self.FUSION_CHANNELS_IN) != list:
+            self.FUSION_CHANNELS_IN = [self.FUSION_CHANNELS_IN]
+
+        # input image shape
+        self.IMAGE_SHAPE = np.array([self.IMAGE_MIN_DIM, self.IMAGE_MAX_DIM, 3])
+
+        # backbone 各个stage的fmap大小
+        # 1024/[4, 8, 16, 32, 64] = [256, 128, 64, 32, 16]
         self.BACKBONE_SHAPES = np.ceil(np.array([[self.IMAGE_SHAPE[0] / stride, self.IMAGE_SHAPE[1] / stride]
                                                  for stride in self.BACKBONE_STRIDES])).astype(np.int)
 
-        # fusion map shapes
-        if type(self.FUSION_STRIDES) != list:
-            self.FUSION_STRIDES = [self.FUSION_STRIDES]
+        # fusion 各个stage的fmap大小
         self.FUSION_SHAPES = np.ceil(np.array([[self.IMAGE_SHAPE[0] / stride, self.IMAGE_SHAPE[1] / stride]
                                                for stride in self.FUSION_STRIDES])).astype(np.int)
 
-        if self.BACKBONE_ARCH.startwith('resnet'):
-            self.BACKBONE_INCLUDE = ['conv1', 'bn1', 'relu', 'maxpool', 'layer1', 'layer2', 'layer3', 'layer4', 'avgpool', 'fc'][0:-5]
 
         self.check()
 
@@ -230,14 +243,14 @@ class Config(object):
         FUSION 承前启后，需要对前后约束关系进行检查, Backbone & Fusion & Anchors
         """
         # 自约束
-        assert len(self.BACKBONE_STRIDES) == len(self.BACKBONE_CHANNELS), 'assert 2'
+        assert len(self.BACKBONE_STAGES) == len(self.BACKBONE_CHANNELS), 'assert 2'
+        assert len(self.BACKBONE_STAGES) == len(self.BACKBONE_STRIDES), 'assert 2'
         assert len(self.FUSION_STRIDES) == len(self.FUSION_SHAPES), 'assert 3'
 
         # 关联约束
         if self.FUSION_LEVELS == 1:
             # fusion & backbone 约束
-            assert self.FUSION_LEVELS == len(self.BACKBONE_CHANNELS), 'assert'
-            assert self.FUSION_LEVELS == len(self.BACKBONE_STRIDES), 'assert'
+            assert self.FUSION_LEVELS == len(self.BACKBONE_STAGES), 'assert'
             # fusion & 自身约束
             assert self.FUSION_LEVELS == len(self.FUSION_STRIDES), 'assert 2'
             assert self.FUSION_METHOD in ['simple', 'none'], 'assert 6'
@@ -246,8 +259,7 @@ class Config(object):
 
         elif self.FUSION_LEVELS > 1:
             # fusion & backbone 约束
-            assert self.FUSION_LEVELS == len(self.BACKBONE_CHANNELS), 'assert'
-            assert self.FUSION_LEVELS == len(self.BACKBONE_STRIDES), 'assert'
+            assert self.FUSION_LEVELS == len(self.BACKBONE_STAGES), 'assert'
             # fusion & 自身约束
             assert self.FUSION_LEVELS == len(self.FUSION_STRIDES), 'assert 2'
             assert self.FUSION_METHOD in ['fpn', 'ssd'], 'assert 6'
@@ -291,7 +303,7 @@ class ShapesConfig(Config):
 
     # Reduce training ROIs per image because the images are small and have
     # few objects. Aim to allow ROI sampling to pick 33% positive ROIs.
-    TRAIN_ROIS_PER_IMAGE = 32
+    TRAIN_ROIS_PER_IMAGE = 300
 
     # Use a small epoch since the data is simple
     TRAIN_STEPS_PER_EPOCH = 1

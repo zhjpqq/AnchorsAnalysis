@@ -1,10 +1,12 @@
+from __future__ import print_function
 import os
 import torch
 from torch.utils.ffi import create_extension
 
+#this_file = os.path.dirname(__file__)
 
-sources = ['src/nms.c']
-headers = ['src/nms.h']
+sources = []
+headers = []
 defines = []
 with_cuda = False
 
@@ -17,8 +19,9 @@ if torch.cuda.is_available():
 
 this_file = os.path.dirname(os.path.realpath(__file__))
 print(this_file)
-extra_objects = ['src/cuda/nms_kernel.cu.o']
+extra_objects = ['src/nms_cuda_kernel.cu.o']
 extra_objects = [os.path.join(this_file, fname) for fname in extra_objects]
+print(extra_objects)
 
 ffi = create_extension(
     '_ext.nms',

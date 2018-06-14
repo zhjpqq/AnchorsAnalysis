@@ -69,7 +69,7 @@ for image_id in image_ids:
 model = HotRCNN(config=config)
 
 # Which weights to start with ?
-init_with = "ckpt"
+init_with = "backbone"
 # Weights 权值加载
 # 1. 未训练加载：从imagenet加载resnet/resnext模型的权值
 # 2. 已训完加载：加载一个已经训练完成的完整hrcnn模型
@@ -154,24 +154,23 @@ model.load_weights(filepath=model_path, source='ckpt')
 if config.GPU_COUNT > 0:
     model.cuda()
 
-# Test on a random image
-image_id = np.random.choice(dataset_test.image_ids)
-image, image_meta, gt_class_id, gt_bbox, gt_mask = dataset_test.load_image_gt(image_id, inference_config)
+# Test on some random images
+image_ids = np.random.choice(dataset_test.image_ids, 1)
+for image_id in image_ids:
+    image, image_meta, gt_class_id, gt_bbox, gt_mask = dataset_test.load_image_gt(image_id, inference_config, chw=True)
 
-utils.log("original_image", image)
-utils.log("image_meta", image_meta)
-utils.log("gt_class_id", gt_class_id)
-utils.log("gt_bbox", gt_bbox)
-utils.log("gt_mask", gt_mask)
+    utils.log("original_image", image)
+    utils.log("image_meta", image_meta)
+    utils.log("gt_class_id", gt_class_id)
+    utils.log("gt_bbox", gt_bbox)
+    utils.log("gt_mask", gt_mask)
 
-visualize.display_instances(image, gt_bbox, gt_mask, gt_class_id,
-                            dataset_train.class_names, figsize=(8, 8))
+    visualize.display_instances(image.transpose(1, 2, 0), gt_bbox, gt_mask, gt_class_id, dataset_train.class_names, figsize=(8, 8))
 
-results = model.detect(images=image[np.newaxis, :], metas=image_meta[np.newaxis, :])
+    results = model.detect(images=image[np.newaxis, :], metas=image_meta[np.newaxis, :])[0]
 
-r = results[0]  # 只有一张图片，一个检测结果
-visualize.display_instances(image, r['rois'], r['masks'], r['class_ids'],
-                            dataset_test.class_names, r['scores'], ax=utils.get_ax())
+    visualize.display_instances(image.transpose(1, 2, 0), results['rois'], results['masks'], results['class_ids'],
+                                dataset_test.class_names, results['scores'], ax=utils.get_ax())
 
 # 测试任意无GT-info图像
 image = dataset_test.load_image(image_id)
@@ -183,13 +182,12 @@ image_ids = np.random.choice(dataset_test.image_ids, 10)
 APs = []
 for image_id in image_ids:
     # Load image and ground truth data
-    image, image_meta, gt_class_id, gt_bbox, gt_mask = dataset_test.load_image_gt(image_id, inference_config)
+    image, image_meta, gt_class_id, gt_bbox, gt_mask = dataset_test.load_image_gt(image_id, inference_config, chw=True)
     # Run object detection
-    results = model.detect(images=np.stack([image]), metas=np.stack([image_meta]))
-    r = results[0]
+    result = model.detect(images=np.stack([image], axis=0), metas=np.stack([image_meta], axis=0))[0]
     # Compute AP
     AP, precisions, recalls, overlaps = \
-        utils.compute_ap(gt_bbox, gt_class_id, r["rois"], r["class_ids"], r["scores"])
+        utils.compute_ap(gt_bbox, gt_class_id, result["rois"], result["class_ids"], result["scores"])
     APs.append(AP)
 
 mAP = np.mean(APs)

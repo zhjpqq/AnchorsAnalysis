@@ -4,18 +4,32 @@ __date__ = '2018/6/5 21:29'
 __author__ = 'ooo'
 
 from Models.fpnet import FPNet
-from Models.lscnet import LSCNet
+from Models.lscnet import LSCNet, NoneNet
 
 
-def fusionnet(method, levels, indepth, outdepth, strides, shapes):
+def fusionnet(method, levels, stages, indepth, outdepth, strides, shapes):
+    """
+    :param method:
+    :param levels:
+    :param indepth:
+    :param outdepth:
+    :param strides:
+    :param shapes:
+    :param stages: which to choose in [C1, C2, C3, C4, C5, C6]
+    :return:
+    """
+    stages = [int(s[1]) - 1 for s in stages]
     if method == 'fpn':
-        assert len(indepth) == levels-1, '输入特征级数与指定的FUSION_LEVELS不匹配！'
-        net = FPNet(indepth=indepth, outdepth=outdepth)
+        assert len(indepth) == levels - 1, '输入特征级数与指定的FUSION_LEVELS不匹配！'
+        net = FPNet(indepth=indepth, outdepth=outdepth, stages=stages)
+
     elif method == 'lsc':
-        net = LSCNet(indepth=indepth, outdepth=outdepth, kernel=16)
+        net = LSCNet(indepth=indepth, outdepth=outdepth, stages=stages, kernel=16)
+
     elif method == 'none':
-        net = None
+        net = NoneNet(indepth=indepth, outdepth=outdepth, stages=stages)
+
     else:
         raise ValueError('未知的参数设定！Unknown feature FUSION_METHOD！%s' % method)
-    return net
 
+    return net
