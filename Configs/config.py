@@ -148,6 +148,8 @@ class Config(object):
 
     ANCHOR_STRIDE = 1  # 锚点生成间隔，每隔几个点生成一个锚点，控制锚点的稀疏/密集程度
 
+    ANCHOR_HEAT_METHOD = ['accumulate', 'separable', 'window'][0]
+
     ANCHOR_LEVELS = FUSION_LEVELS  # 锚点位于几个level的金字塔上，多个level的时候与Scales相等
 
     ANCHOR_ZERO_AREA = 1 * 1

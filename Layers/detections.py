@@ -6,6 +6,7 @@ __author__ = 'ooo'
 import numpy as np
 import torch
 from torch.autograd import Variable
+from torch import nn
 
 from DataSets.imdb import IMDB
 from NMS1.nms.nms_wrapper import nms as nms_func1
@@ -17,42 +18,116 @@ from Utils import utils
 #  Detection Layer
 ############################################################
 
+class DetectionLayer(nn.Module):
+    def __init__(self, config=None):
+        super(DetectionLayer, self).__init__()
+        self.config = config
 
-def apply_box_deltas(boxes, deltas):
-    """Applies the given deltas to the given boxes.
-    boxes: [N, 4] where each row is y1, x1, y2, x2
-    deltas: [N, 4] where each row is [dy, dx, log(dh), log(dw)]
+    def forward(self, rois, class_probs, bbox_deltas, image_metas, normalized=False, config=None):
+        return pyramid_detection_layer(rois, class_probs, bbox_deltas, image_metas, normalized, config)
+
+
+def pyramid_detection_layer(rois, class_probs, bbox_deltas, image_metas, normalized=False, config=None):
+    """Takes classified proposal boxes and their bounding box deltas and
+    returns the final detection boxes.  整理对ROIs的检测结果，返回最终检测结果Detections
+
+    输入：
+    rois : [batch, N, (y1, x1, y2, x2)], tensor
+    class_probs : [batch, N, (score1，score2, score3, ...)], tensor    # batch*N ?
+    bbox_deltas : [batch, N, class_nums, (dy1, dx1, dh, dw)], tensor  # batch*N ?
+    image_metas : [batch, (meta)], tensor                             # batch*N ?
+
+    [rois1, rois2, rois3, ...],
+    [class_probs1, class_probs2, class_probs3, ...],
+    [bbox_deltas, bbox_deltas, bbox_deltas, ...],
+    [image_metas, image_metas, image_metas, ...],
+
+    Returns:
+    all_detections: [batch, max_N, (y1, x1, y2, x2, class_id, score)], or [ad1, ad2, ad3, ...]  in pixels
+    all_boxes : [batch, max_N, (y1, x1, y2, x2)], or [ab1, ab2, ab3, ...]  in normalized
     """
-    # Convert to y, x, h, w     # todo ??? + 1
-    height = boxes[:, 2] - boxes[:, 0]
-    width = boxes[:, 3] - boxes[:, 1]
-    center_y = boxes[:, 0] + 0.5 * height
-    center_x = boxes[:, 1] + 0.5 * width
-    # Apply deltas
-    center_y += deltas[:, 0] * height
-    center_x += deltas[:, 1] * width
-    height *= torch.exp(deltas[:, 2])
-    width *= torch.exp(deltas[:, 3])
-    # Convert back to y1, x1, y2, x2
-    y1 = center_y - 0.5 * height
-    x1 = center_x - 0.5 * width
-    y2 = y1 + height
-    x2 = x1 + width
-    result = torch.stack([y1, x1, y2, x2], dim=1)
-    return result
+
+    if len(rois) == 1:
+
+        all_detections, all_boxes = batch_detection_layer(config, rois[0], class_probs,
+                                                          bbox_deltas, image_metas, normalized)
+
+        return [all_detections], [all_boxes]
+
+    elif len(rois) > 1:
+
+        assert not np.any(np.array([len(class_probs), len(bbox_deltas), len(image_metas)]) - len(rois))
+
+        all_detections = []
+        all_boxes = []
+        for level in range(len(rois)):
+            detections, boxes = batch_detection_layer(config, rois[level], class_probs[level],
+                                                      bbox_deltas[level], image_metas[level], normalized)
+            all_detections.append(detections)
+            all_boxes.append(boxes)
+
+        # todo 整合各个层级上的检测结果[ad1, ad2, ad3, ...]
+
+        return all_detections, all_boxes
+
+    else:
+        raise ValueError('错误的特征融合级数！')
 
 
-def clip_to_window(window, boxes):
+def batch_detection_layer(config, rois, class_probs, bbox_deltas, image_metas, normalized=False):
+    """Takes classified proposal boxes and their sores & bounding box deltas and
+    returns the final detection boxes.
+
+    输入：
+    rois : [batch, N, (y1, x1, y2, x2)], tensor
+    class_probs : [batch*N, (score1，score2, score3, ...)], tensor
+    bbox_deltas : [batch*N, class_nums, (dy1, dx1, dh, dw)], tensor
+    image_metas : [batch, (meta1, meta2, meta3, ...)], len(meta)=12, [[meta1],[meta2],[meta3],...],  tensor
+
+    Returns:
+    all_detections: [batch, max_N, (y1, x1, y2, x2, class_id, score)]  in pixels
+    all_boxes : [batch, max_N, (y1, x1, y2, x2)]  in normalized
     """
-        window: (y1, x1, y2, x2). The window in the image we want to clip to.
-        boxes: [N, (y1, x1, y2, x2)]
-    """
-    boxes[:, 0] = boxes[:, 0].clamp(float(window[0]), float(window[2]))
-    boxes[:, 1] = boxes[:, 1].clamp(float(window[1]), float(window[3]))
-    boxes[:, 2] = boxes[:, 2].clamp(float(window[0]), float(window[2]))
-    boxes[:, 3] = boxes[:, 3].clamp(float(window[1]), float(window[3]))
 
-    return boxes
+    # Currently only supports batchsize 1
+    if rois.size(0) == 1:
+        rois = rois.squeeze(0)
+        _, _, window, _ = IMDB.parse_image_meta(image_metas)  # window: [[y1, x1, y2, x2]]
+        window = window[0]  # 只有1个batch，所以只取第一个window.
+
+        all_detections = refine_detections(rois, class_probs, bbox_deltas, window, config)
+
+        all_boxes = all_detections[:, :4]
+        if normalized:
+            h, w = config.IMAGE_SHAPE[:2]
+            scale = Variable(torch.FloatTensor(np.array([h, w, h, w])).cuda(), requires_grad=False)
+            all_boxes /= scale
+
+        all_detections = all_detections.unsqueeze(0)
+        all_boxes = all_boxes.unsqueeze(0)
+        return all_detections, all_boxes
+
+    # Goto surpport batchsize > 1
+    else:
+        batches = rois.size(0)
+
+        _, _, window, _ = IMDB.parse_image_meta(image_metas)  # window: [[window1],[window2],[window3],...]
+        class_probs = class_probs.view(batches, -1, class_probs.shape[1])
+        bbox_deltas = bbox_deltas.view(batches, -1, bbox_deltas.shape[1], bbox_deltas.shape[2])
+
+        all_detections = rois.new((batches, config.DETECTION_MAX_INSTANCES, 6)).zero_()
+
+        for b in range(rois.size(0)):
+            detections = refine_detections(rois[b], class_probs[b], bbox_deltas[b], window[b], config)
+            all_detections[b, :, :] = detections
+
+        all_boxes = all_detections[:, :, :4]
+        if normalized:
+            h, w = config.IMAGE_SHAPE[:2]
+            scale = Variable(torch.FloatTensor(np.array([h, w, h, w])).cuda(), requires_grad=False)
+            all_boxes /= scale
+
+        return all_detections, all_boxes
 
 
 def refine_detections(rois, probs, deltas, window, config):
@@ -187,104 +262,38 @@ def refine_detections(rois, probs, deltas, window, config):
     return result  # shape: nx6, 100x6
 
 
-def batch_detection_layer(config, rois, class_probs, bbox_deltas, image_metas, normalized=False):
-    """Takes classified proposal boxes and their sores & bounding box deltas and
-    returns the final detection boxes.
-
-    输入：
-    rois : [batch, N, (y1, x1, y2, x2)], tensor
-    class_probs : [batch*N, (score1，score2, score3, ...)], tensor
-    bbox_deltas : [batch*N, class_nums, (dy1, dx1, dh, dw)], tensor
-    image_metas : [batch, (meta1, meta2, meta3, ...)], len(meta)=12, [[meta1],[meta2],[meta3],...],  tensor
-
-    Returns:
-    all_detections: [batch, max_N, (y1, x1, y2, x2, class_id, score)]  in pixels
-    all_boxes : [batch, max_N, (y1, x1, y2, x2)]  in normalized
+def apply_box_deltas(boxes, deltas):
+    """Applies the given deltas to the given boxes.
+    boxes: [N, 4] where each row is y1, x1, y2, x2
+    deltas: [N, 4] where each row is [dy, dx, log(dh), log(dw)]
     """
-
-    # Currently only supports batchsize 1
-    if rois.size(0) == 1:
-        rois = rois.squeeze(0)
-        _, _, window, _ = IMDB.parse_image_meta(image_metas)  # window: [[y1, x1, y2, x2]]
-        window = window[0]  # 只有1个batch，所以只取第一个window.
-
-        all_detections = refine_detections(rois, class_probs, bbox_deltas, window, config)
-
-        all_boxes = all_detections[:, :4]
-        if normalized:
-            h, w = config.IMAGE_SHAPE[:2]
-            scale = Variable(torch.FloatTensor(np.array([h, w, h, w])).cuda(), requires_grad=False)
-            all_boxes /= scale
-
-        all_detections = all_detections.unsqueeze(0)
-        all_boxes = all_boxes.unsqueeze(0)
-        return all_detections, all_boxes
-
-    # Goto surpport batchsize > 1
-    else:
-        batches = rois.size(0)
-
-        _, _, window, _ = IMDB.parse_image_meta(image_metas)  # window: [[window1],[window2],[window3],...]
-        class_probs = class_probs.view(batches, -1, class_probs.shape[1])
-        bbox_deltas = bbox_deltas.view(batches, -1, bbox_deltas.shape[1], bbox_deltas.shape[2])
-
-        all_detections = rois.new((batches, config.DETECTION_MAX_INSTANCES, 6)).zero_()
-
-        for b in range(rois.size(0)):
-            detections = refine_detections(rois[b], class_probs[b], bbox_deltas[b], window[b], config)
-            all_detections[b, :, :] = detections
-
-        all_boxes = all_detections[:, :, :4]
-        if normalized:
-            h, w = config.IMAGE_SHAPE[:2]
-            scale = Variable(torch.FloatTensor(np.array([h, w, h, w])).cuda(), requires_grad=False)
-            all_boxes /= scale
-
-        return all_detections, all_boxes
+    # Convert to y, x, h, w     # todo ??? + 1
+    height = boxes[:, 2] - boxes[:, 0]
+    width = boxes[:, 3] - boxes[:, 1]
+    center_y = boxes[:, 0] + 0.5 * height
+    center_x = boxes[:, 1] + 0.5 * width
+    # Apply deltas
+    center_y += deltas[:, 0] * height
+    center_x += deltas[:, 1] * width
+    height *= torch.exp(deltas[:, 2])
+    width *= torch.exp(deltas[:, 3])
+    # Convert back to y1, x1, y2, x2
+    y1 = center_y - 0.5 * height
+    x1 = center_x - 0.5 * width
+    y2 = y1 + height
+    x2 = x1 + width
+    result = torch.stack([y1, x1, y2, x2], dim=1)
+    return result
 
 
-def pyramid_detection_layer(rois, class_probs, bbox_deltas, image_metas, normalized=False, config=None):
-    """Takes classified proposal boxes and their bounding box deltas and
-    returns the final detection boxes.  整理对ROIs的检测结果，返回最终检测结果Detections
-
-    输入：
-    rois : [batch, N, (y1, x1, y2, x2)], tensor
-    class_probs : [batch, N, (score1，score2, score3, ...)], tensor    # batch*N ?
-    bbox_deltas : [batch, N, class_nums, (dy1, dx1, dh, dw)], tensor  # batch*N ?
-    image_metas : [batch, (meta)], tensor                             # batch*N ?
-
-    [rois1, rois2, rois3, ...],
-    [class_probs1, class_probs2, class_probs3, ...],
-    [bbox_deltas, bbox_deltas, bbox_deltas, ...],
-    [image_metas, image_metas, image_metas, ...],
-
-    Returns:
-    all_detections: [batch, max_N, (y1, x1, y2, x2, class_id, score)], or [ad1, ad2, ad3, ...]  in pixels
-    all_boxes : [batch, max_N, (y1, x1, y2, x2)], or [ab1, ab2, ab3, ...]  in normalized
+def clip_to_window(window, boxes):
     """
+        window: (y1, x1, y2, x2). The window in the image we want to clip to.
+        boxes: [N, (y1, x1, y2, x2)]
+    """
+    boxes[:, 0] = boxes[:, 0].clamp(float(window[0]), float(window[2]))
+    boxes[:, 1] = boxes[:, 1].clamp(float(window[1]), float(window[3]))
+    boxes[:, 2] = boxes[:, 2].clamp(float(window[0]), float(window[2]))
+    boxes[:, 3] = boxes[:, 3].clamp(float(window[1]), float(window[3]))
 
-    if len(rois) == 1:
-
-        all_detections, all_boxes = batch_detection_layer(config, rois[0], class_probs,
-                                                          bbox_deltas, image_metas, normalized)
-
-        return [all_detections], [all_boxes]
-
-    elif len(rois) > 1:
-
-        assert not np.any(np.array([len(class_probs), len(bbox_deltas), len(image_metas)]) - len(rois))
-
-        all_detections = []
-        all_boxes = []
-        for level in range(len(rois)):
-            detections, boxes = batch_detection_layer(config, rois[level], class_probs[level],
-                                                      bbox_deltas[level], image_metas[level], normalized)
-            all_detections.append(detections)
-            all_boxes.append(boxes)
-
-        # todo 整合各个层级上的检测结果[ad1, ad2, ad3, ...]
-
-        return all_detections, all_boxes
-
-    else:
-        raise ValueError('错误的特征融合级数！')
+    return boxes

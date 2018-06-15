@@ -16,13 +16,11 @@ from torch import optim
 
 from Models.backbone import backbone
 from Models.fusionnet import fusionnet
-from Models.fpnet import FPNet
-from Models.lscnet import LSCNet
-from Layers.anchors import PyramidAnchorLayer
+from Layers.anchors import PyramidAnchorLayer, HotAnchorLayer
 from Layers.proposals import HotProposalLayer
 from Layers.rois_target import RoiTargetLayer
 from Layers.class_bbox_mask import ClassBoxNet, MaskNet
-from Layers.detections import pyramid_detection_layer
+from Layers.detections import DetectionLayer
 from Layers.loss import compute_losses
 from Utils import utils, visualize
 from DataSets.imdb import IMDB
@@ -69,8 +67,20 @@ class HotRCNN(nn.Module):
                                                    counts=config.ANCHORS_PER_IMAGE,
                                                    levels=config.ANCHOR_LEVELS,
                                                    zero_area=config.ANCHOR_ZERO_AREA,
+                                                   image_shape=config.IMAGE_SHAPE,
                                                    feature_shapes=config.FUSION_SHAPES,
                                                    feature_strides=config.FUSION_STRIDES)
+
+        self.anchors_generate = HotAnchorLayer(scales=config.ANCHOR_SCALES,
+                                               ratios=config.ANCHOR_ASPECTS,
+                                               stride=config.ANCHOR_STRIDE,
+                                               counts=config.ANCHORS_PER_IMAGE,
+                                               levels=config.ANCHOR_LEVELS,
+                                               method=config.ANCHOR_METHOD,
+                                               zero_area=config.ANCHOR_ZERO_AREA,
+                                               image_shape=config.IMAGE_SHAPE,
+                                               feature_shapes=config.FUSION_SHAPES,
+                                               feature_strides=config.FUSION_STRIDES)
 
         # Proposals选择层
         self.proposals_select = HotProposalLayer(counts=config.PROPOSALS_PER_IMAGE,
@@ -100,7 +110,7 @@ class HotRCNN(nn.Module):
                                 level_nums=config.ANCHOR_LEVELS)
 
         # detection results
-        self.detection_layer = pyramid_detection_layer
+        self.detection_refine = DetectionLayer(config=config)
 
         # compute loss
         self.compute_losses = compute_losses
@@ -142,7 +152,7 @@ class HotRCNN(nn.Module):
         fmaps = self.fusionnet(fmaps)
 
         # anchors = [[N,y1,x1,y2,x2],...]
-        anchors = self.anchors_generate()
+        anchors = self.anchors_generate(fmaps)
 
         # [[batch, N, (y2, x2, y1, x1)],...]
         proposals = self.proposals_select(fmaps, anchors)
@@ -181,7 +191,7 @@ class HotRCNN(nn.Module):
             # Detections
             # detections: [[batch, num_detections, (y1, x1, y2, x2, class_id, score)],...] in image coordinates
             # boxes: [[batch, num_detections, (y1, x1, y2, x2)],...] in image/normalized coodinates
-            detections, boxes = self.detection_layer(rois, class_probs, pred_deltas, image_metas, True, self.config)
+            detections, boxes = self.detection_refine(rois, class_probs, pred_deltas, image_metas, True)
 
             # Create masks for detections
             # pred_masks: [b*N, class_nums, h', w'] -> [batch, num_detections, class_nums, h', w']

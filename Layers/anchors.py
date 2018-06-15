@@ -13,6 +13,188 @@ from torch import nn
 #  Anchors
 ############################################################
 
+class PyramidAnchorLayer(nn.Module):
+
+    def __init__(self, scales, ratios, stride, counts, levels, zero_area, image_shape, feature_shapes, feature_strides):
+        super(PyramidAnchorLayer, self).__init__()
+        self.scales = scales
+        self.ratios = ratios
+        self.stride = stride
+        self.counts = counts
+        self.levels = levels
+        self.zero_area = zero_area
+        self.image_shape = image_shape
+        self.feature_shapes = feature_shapes
+        self.feature_strides = feature_strides
+
+    def forward(self, *input):
+        """
+        : input: fmaps in list. not used.
+        : return:
+        """
+        return generate_pyramid_anchors(self.scales, self.ratios, self.stride,
+                                        self.counts, self.levels, self.zero_area,
+                                        self.feature_shapes, self.feature_strides)
+
+
+class HotAnchorLayer(nn.Module):
+
+    def __init__(self, scales, ratios, stride, counts, levels, method, zero_area, image_shape, feature_shapes, feature_strides):
+        super(HotAnchorLayer, self).__init__()
+        self.scales = scales
+        self.ratios = ratios
+        self.stride = stride    # anchor_stride
+        self.counts = counts
+        self.levels = levels
+        self.heat_method = method
+        self.zero_area = zero_area
+        self.image_shape = image_shape
+        self.feature_shapes = feature_shapes
+        self.feature_strides = feature_strides
+
+    def forward(self, feature_maps):
+        """
+        - feature_maps: [fmap1, fmap2, ...], 尺寸按大到小排列
+            fmap1: [batch, c, h, w]，Variable
+        - all_anchors: [anchors1, anchors2, ...], Variable
+            anchors: [batch, N, (y1, x1, y2, x2)] , array
+        """
+        # 热度统计方法
+        if self.heat_method == 'accumulate':
+            heat_centers = self.accumulate_heat_map
+        elif self.heat_method == 'separable':
+            heat_centers = self.seperable_heat_map
+        elif self.heat_method == 'window':
+            heat_centers = self.window_heat_map
+        else:
+            raise ValueError("未知的heat_method！")
+
+        all_anchors = []
+
+        # Note：单层/多层情况下，每个点上的scale不同，anchors中的数量N不相同！
+        # all_anchors : counts*len(scales)*len(ratios)*level_nums
+        # 1000*3*3*1  vs  1000*1*3*5
+
+        # 单层特征图
+        if self.levels == 1 and len(feature_maps) == 1:
+            centers = heat_centers(feature_maps[0], self.counts, self.image_shape)
+            anchors = self.boxes_generate(centers, self.scales, self.ratios, self.image_shape, feature_maps[0].shape[2:], self.zero_area)
+            all_anchors.append(anchors)
+
+        # 金字塔特征图
+        elif self.levels > 1 and len(feature_maps) > 1:
+            assert self.levels == len(self.scales), '特征层levels与scales不相同！'
+            assert len(feature_maps) == len(self.scales), '特征图fmaps与scales层级不相同！'
+            for i, fmap in enumerate(feature_maps):
+                centers = heat_centers(fmap, self.counts, self.image_shape)
+                anchors = self.boxes_generate(centers, self.scales[i], self.ratios, self.image_shape, fmap.shape[2:], self.zero_area)
+                all_anchors.append(anchors)
+        else:
+            raise ValueError('错误的特征融合层数！%s')
+
+        return all_anchors
+
+    @staticmethod
+    def accumulate_heat_map(x, counts, image_shape):
+        """方案3
+        累积最大热度：将所有通道独立去均值，独立求绝对值，再映射到01？，再累积相加，然后比大小.
+        返回的centers，必须是以原图尺寸为参照！
+        :param  x: [batch, channels, height, weight]，float32
+        :param  shape: (h, w, c) 原图尺寸
+        :return: centers: [batch, N, (y, x)] tensor, Normalized in image_shape
+        """
+        assert x.size(2) * x.size(3) > counts, 'need anchors counts > pixels of fmap'
+        strides = torch.FloatTensor([image_shape[0]/x.size(2), image_shape[1]/x.size(3)]).cuda()
+        centers = x.data.new(x.size(0), counts, 2).zero_()
+        for b in range(x.size(0)):
+            fmap = x[b, :, :, :]
+            fmap = torch.sum(torch.abs(fmap - torch.mean(torch.mean(fmap, 1, True), 2, True)), 0)
+            kval, _ = torch.topk(fmap.view(-1), k=counts)
+            points = np.where((fmap >= kval[-1]).data)
+            points_y = torch.FloatTensor(points[0]).contiguous().cuda()
+            points_x = torch.FloatTensor(points[1]).contiguous().cuda()
+            points = torch.cat([points_y.view(-1, 1), points_x.view(-1, 1)], dim=1)
+            centers[b, :, :] = points/strides
+        return centers
+
+    @staticmethod
+    def seperable_heat_map(x, counts, shape):
+        """ 方案1
+        独立最大热度：各特征通道独立去均值，再独立求绝对值，再独立比大小，再全通道汇总
+        """
+        centers = []
+        return centers
+
+    @staticmethod
+    def window_heat_map(x, counts, shape):
+        '''
+        pool option
+        '''
+        centers = []
+        return centers
+
+    @staticmethod
+    def boxes_generate(centers, scales, ratios, image_shape, fmap_shape, zero_area):
+        """
+        在每个点上生成一组盒子，具有不同的尺度和形状，返回所有盒子角点坐标.
+        scales, centers 都以原图尺寸为参照，因此生成的盒子最后/shape, 即可归一化！
+
+        #todo ??? : how to filter zero_area
+
+        scales = array, [16, 32, 64, 128, 256, ...]，levels>1时，每层分配1个scale
+        ratios = array, [0.5, 1, 2]
+        centers = tensor, [batch, N, (y, x)]
+        :all_boxes = tensor, [batch, N*len(scales)*len(ratios), (y1, x1, y2, x2)]
+        """
+        if not isinstance(scales, (list, tuple)):
+            scales = [scales]
+
+        centers = centers.cpu().numpy()
+        batches, counts = centers.shape[0:2]
+        counts = counts * len(scales) * len(ratios)
+        all_boxes = np.zeros(shape=(batches, counts, 4), dtype='float32')
+
+        # 第一步：获取w/h组合
+        # 获取所有scale和ratios的组合
+        scales, ratios = np.meshgrid(scales, ratios)
+        scales, ratios = scales.flatten(), ratios.flatten()     # shape N
+        # 按ratios调整scales尺度
+        heights = (scales / np.sqrt(ratios)).reshape(-1, 1)     # shape N
+        widths = (scales * np.sqrt(ratios)).reshape(-1, 1)      # shape N
+
+        for b in range(batches):
+            # 第二步：获取y/x  shape: [N2, (y, x)]
+            # box_centers = centers[b, :, :]
+            # ctr_y, ctr_x = centers[b, :, 0], centers[b, :, 1]
+
+            box_heights, box_centers_y = np.meshgrid(heights, centers[b, :, 0])     # shape NxK, NxK
+            box_widths, box_centers_x = np.meshgrid(widths, centers[b, :, 1])
+
+            # Reshape to get a list of (y, x) and a list of (h, w)
+            box_centers = np.stack([box_centers_y, box_centers_x], axis=2)          # shape NxKx2
+            box_sizes = np.stack([box_heights, box_widths], axis=2)                 # shape NxKx2
+            box_centers = np.reshape(box_centers, (-1, 2))
+            box_sizes = np.reshape(box_sizes, (-1, 2))
+
+            # 第四步：中心坐标+长宽 变换为 对角顶点坐标
+            # Convert to corner coordinates (y1, x1, y2, x2)
+            # np.concatenate([[y1, x1],[y2, x2]], axis=1) → [y1, x1, y2, x2]
+            all_boxes[b, :, :] = np.concatenate([box_centers - 0.5 * box_sizes,
+                                                 box_centers + 0.5 * box_sizes], axis=1)
+
+        # filter 0 area boxes, object must have 4*4 pixels on original image
+        # note : each batch has different counts of zero-area boxes
+
+        # 归一化  [batch, counts, (y1, x1, y2, x2)]
+        all_boxes /= np.array([image_shape[0], image_shape[1], image_shape[0], image_shape[1]]).astype(np.float32)
+
+        # crop tp [0~1] within image shape
+        all_boxes = torch.from_numpy(all_boxes).cuda().float().clamp(0, 1)
+
+        all_boxes = Variable(all_boxes, requires_grad=False)
+        return all_boxes
+
+
 def generate_anchors(scales, ratios, anchor_stride, feature_shape, feature_stride):
     """
     scales: 1D array of anchor sizes in pixels. Example: [32, 64, 128]
@@ -52,7 +234,7 @@ def generate_anchors(scales, ratios, anchor_stride, feature_shape, feature_strid
 
     # 归一化，并裁剪，0~1
     image_shape = np.array([feature_shape[0], feature_shape[1], feature_shape[0], feature_shape[1]])*feature_stride
-    boxes = np.clip(boxes/image_shape, 0, 1)
+    boxes = np.clip(boxes/image_shape.astype(np.float32), 0, 1)
 
     return boxes
 
@@ -94,22 +276,4 @@ def generate_pyramid_anchors(scales, ratios, stride, counts, levels, zero_area, 
     anchors = Variable(torch.from_numpy(anchors).float(), requires_grad=False).cuda()
     return [anchors]
 
-
-class PyramidAnchorLayer(nn.Module):
-
-    def __init__(self, scales, ratios, stride, counts, levels, zero_area, feature_shapes, feature_strides):
-        super(PyramidAnchorLayer, self).__init__()
-        self.scales = scales
-        self.ratios = ratios
-        self.stride = stride
-        self.counts = counts
-        self.levels = levels
-        self.zero_area = zero_area
-        self.feature_shapes = feature_shapes
-        self.feature_strides = feature_strides
-
-    def forward(self, *input):
-        return generate_pyramid_anchors(self.scales, self.ratios, self.stride,
-                                        self.counts, self.levels, self.zero_area,
-                                        self.feature_shapes, self.feature_strides)
 
