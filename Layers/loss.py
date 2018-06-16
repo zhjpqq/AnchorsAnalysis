@@ -46,6 +46,10 @@ def compute_class_loss(target_class_ids, pred_class_logits):
     # todo # https://github.com/zhjpqq/pytorch-mask-rcnn/blob/master/model.py#L1047 ??? 参数不匹配
     target_class_ids: [batch*num_rois]. Integer class IDs. Uses zero padding to fill in the array.
     pred_class_logits: [batch*num_rois, num_classes]
+    active_class_ids : [batch, num_classes]. Has a value of 1 for classes that are in the dataset of the image, and 0
+                        for classes that are not in the dataset. from MASK_RCNN/mrcnn_class_loss_graph.
+                        此图片上可能有好多类，但有的class不一定在本次抽取的DataSet中. 计算损失时，需要排除这些类.
+
     """
     # Loss
     if target_class_ids.size():

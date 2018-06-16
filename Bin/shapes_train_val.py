@@ -45,7 +45,7 @@ config = ShapesConfig()
 config.EXP_DIR = exp_dir
 config.BACKBONE_ARCH = 'resnet50'
 config.BACKBONE_DIR = backbone_dir
-config.BACKBONE_PATH = backbone_path
+config.BACKBONE_NAME = backbone_name
 config.display()
 
 # Training dataset

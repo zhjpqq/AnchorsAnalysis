@@ -145,10 +145,11 @@ class HotProposalLayer(nn.Module):
                 for a in range(anchors_num):
                     anok = sanchors[a, :]
                     try:
-                        bbox = hmap[anok[0]:anok[2], anok[1]:anok[3]]       # todo : map anchors to famp_level, ValueError: result of slicing is an empty tensor
+                        bbox = hmap[anok[0]:anok[2], anok[1]:anok[
+                            3]]  # todo : map anchors to famp_level, ValueError: result of slicing is an empty tensor
                         heat = torch.sum(bbox) / bbox.numel()
                     except:
-                        heat = 0                                            # 当某big anchor在某smal fmap上消失时，令其投票heat=0
+                        heat = 0  # 当某big anchor在某smal fmap上消失时，令其投票heat=0
                     anchors_heat[b, a, c] = heat
 
         anchors_heat = torch.sum(anchors_heat, dim=2)  # [b, N]
@@ -159,9 +160,13 @@ class HotProposalLayer(nn.Module):
         return proposals
 
 
-class GeneralProposalLayer(nn.Module):
+class RandomProposalLayer(nn.Module):
+    """
+    select proposals randomly
+    """
+
     def __init__(self, counts, image_shape, levels):
-        super(GeneralProposalLayer, self).__init__()
+        super(RandomProposalLayer, self).__init__()
         self.counts = counts  # PROPOSALS_PER_IMAGE
         self.image_shape = image_shape
         self.levels = levels
@@ -197,3 +202,14 @@ class GeneralProposalLayer(nn.Module):
         proposals = torch.gather(anchors, dim=1, index=index)
         return [proposals]
 
+
+def select_proposals(config):
+    if config.PROPOSALS_METHOD == 'random':
+        return RandomProposalLayer(counts=config.PROPOSALS_PER_IMAGE,
+                                   image_shape=config.IMAGE_SHAPE,
+                                   levels=config.ANCHOR_LEVELS)
+
+    elif config.PROPOSALS_METHOD == 'hotproposal':
+        return HotProposalLayer(counts=config.PROPOSALS_PER_IMAGE,
+                                image_shape=config.IMAGE_SHAPE,
+                                levels=config.ANCHOR_LEVELS)

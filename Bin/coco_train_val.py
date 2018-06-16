@@ -109,20 +109,21 @@ if __name__ == '__main__':
     import argparse
 
     parser = argparse.ArgumentParser(description='训练和评估coco，HotRCNN')
-    parser.add_argument('command',
-                        metavar='<command>',
-                        help="'train' or 'evaluate' on MS COCO")
-    parser.add_argument('--dataset', required=True,
+    # parser.add_argument('command',
+    #                     default='train',
+    #                     metavar='<command>',
+    #                     help="'train' or 'evaluate' on MS COCO")
+    parser.add_argument('--dataset', required=False,
+                        default='/data/dataset/MSCOCO/data',
                         metavar='path/to/coco',
-                        help='Directory of the MS-COCO dataset',
-                        default='')
+                        help='Directory of the MS-COCO dataset')
     parser.add_argument('--year', required=False,
                         default=2014,
                         metavar='<year>',
                         help='coco data year')
     parser.add_argument('--model', required=False,
-                        # default='hot_rcnn_coco.h5',
-                        metavar="/path/to/weights.h5",
+                        default='backbone',
+                        metavar="backbone or ckpt or hrcnn",
                         help="预训练模型的位置，用于存放resnet或hrcnn模型")
     parser.add_argument('--exp', required=False,
                         default=exp_dir,
@@ -138,6 +139,7 @@ if __name__ == '__main__':
                         help='Automatically download and unzip MS-COCO files (default=False)',
                         type=bool)
     args = parser.parse_args()
+    args.command = 'train'
     print("Command: ", args.command)
     print("Model: ", args.model)
     print("Dataset: ", args.dataset)
@@ -147,8 +149,10 @@ if __name__ == '__main__':
 
     # Config 参数配置
     config = CocoConfig()
+    config.EXP_DIR = exp_dir
+    config.BACKBONE_ARCH = 'resnet50'
     config.BACKBONE_DIR = backbone_dir
-    config.BACKBONE_PATH = backbone_path
+    config.BACKBONE_NAME = backbone_name
     config.HRCNN_MODEL_PATH = hrcnn_model_path
     if args.command == 'evaluate':
         config.GPU_COUNT = 1

@@ -60,12 +60,13 @@ class Config(object):
     # this is the settings for resnet50 / resnet101 .
     BACKBONE_SHAPES = None  # = IMAGE_SHAPE/BACKBONE_STRIDES
 
-    # level=5 [1:] & level=1 [3] for yixia 3 ge.
-    BACKBONE_STRIDES = [2, 4, 8, 16, 32, 64][3]  # 输出特征图相对于原图的尺寸比例, 64: P6 not C6
+    # level=5 [1:] & level=1 [3] for yixia 3 ge..
+    option = 3
+    BACKBONE_STAGES = ['C1', 'C2', 'C3', 'C4', 'C5', 'C6'][option]     # feature maps of stage
 
-    BACKBONE_CHANNELS = [64, 256, 512, 1024, 2048, 2048][3]       # 输出特征图的通道数
+    BACKBONE_STRIDES = [2, 4, 8, 16, 32, 64][option]  # 输出特征图相对于原图的尺寸比例, 64: P6 not C6
 
-    BACKBONE_STAGES = ['C1', 'C2', 'C3', 'C4', 'C5', 'C6'][3]     # feature maps of stage
+    BACKBONE_CHANNELS = [64, 256, 512, 1024, 2048, 2048][option]       # 输出特征图的通道数
 
     # ######################################################
     #   Feature Fusion 参数，控制特征融合
@@ -80,8 +81,8 @@ class Config(object):
 
     FUSION_CHANNELS_IN = BACKBONE_CHANNELS  # 融合之前的特征通道数
 
-    # level=5 [512] & level=1 [== BACKBONE_CHANNELS]
-    FUSION_CHANNELS_OUT = 1024  # 融合之后的特征通道数
+    # level=5 [512 or customVal] & level=1 [== BACKBONE_CHANNELS]
+    FUSION_CHANNELS_OUT = BACKBONE_CHANNELS  # 融合之后的特征通道数
 
     FUSION_STRIDES = BACKBONE_STRIDES  # 融合之后原图与特征图的尺寸比    # same to Backbone strides
 
@@ -99,9 +100,9 @@ class Config(object):
 
     # resnet backbone for imagenet is (224, 224)
     # todo??? shape=[MIN, MAX] or [MAX, MIN]
-    IMAGE_MIN_DIM = 800
+    IMAGE_MIN_DIM = 256
 
-    IMAGE_MAX_DIM = 1024
+    IMAGE_MAX_DIM = 256
 
     IMAGE_SHAPE = np.array([IMAGE_MIN_DIM, IMAGE_MAX_DIM, 3])
 
@@ -153,7 +154,7 @@ class Config(object):
     # scale is respect to original image shape
 
     # levels=1: 1000, levels>1: (16*16)*256 > 1000
-    ANCHORS_PER_IMAGE = 1000
+    ANCHORS_PER_IMAGE = 16*16
 
     ANCHOR_SCALES = [512, 256, 128, 64, 32]
 
@@ -174,12 +175,14 @@ class Config(object):
     # ######################################################
     #           Proposals
     # ######################################################
-    PROPOSALS_PER_IMAGE = 1000
+    PROPOSALS_METHOD = ['random', 'hotproposal'][0]
+
+    PROPOSALS_PER_IMAGE = 256
 
     # ######################################################
     #           ROIs & ROI-Target & ROI-Transform
     # ######################################################
-    TRAIN_ROIS_PER_IMAGE = 800  # 所有用于训练的RoIs
+    TRAIN_ROIS_PER_IMAGE = 200  # 所有用于训练的RoIs
 
     ROIS_POSITIVE_RATIO = 0.33  # 其中正样本占的比例
 
@@ -296,9 +299,9 @@ class Config(object):
 
 class CocoConfig(Config):
     NAME = 'coco'
-    IMAGES_PER_GPU = 2
+    IMAGES_PER_GPU = 1
     GPU_COUNT = 2
-    CLASSES_NUMS = 1 + 80
+    CLASSES_NUMS = 1 + 90
 
 
 class ShapesConfig(Config):

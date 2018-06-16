@@ -10,6 +10,7 @@ from torch import nn
 import math
 import visdom
 
+
 class ResNet(nn.Module):
     """
     修改自 torchvision.models.resnet.ResNet
@@ -56,6 +57,7 @@ class ResNet(nn.Module):
         return nn.Sequential(*layers)
 
     def forward(self, x):
+        C0 = x
         x = self.conv1(x)
         x = self.bn1(x)
         x = self.relu(x)
@@ -75,6 +77,18 @@ class ResNet(nn.Module):
         C6 = x
         # x = x.view(x.size(0), -1)
         # x = self.fc(x)
+
+        # P0, P1, P2, P3, P4, P5, P6 = [C0.data.cpu(), C1.data.cpu(), C2.data.cpu(), C3.data.cpu(), C4.data.cpu(),
+        #                               C5.data.cpu(), C6.data.cpu()]
+        vs = visdom.Visdom()
+        vs.images(C0.data.cpu())
+        # vs.images(P1[:, 3:6, :, :])
+        # vs.images(P2[:, 3:6, :, :])
+        # vs.images(P3[:, 3:6, :, :])
+        # vs.images(P4[:, 3:6, :, :])
+        # vs.images(P5[:, 3:6, :, :])
+
+        # BACKBONE_CHANNELS = [64, 256, 512, 1024, 2048, 2048]
         return [C1, C2, C3, C4, C5, C6]
 
 
@@ -180,4 +194,3 @@ def backbone(arch, pretrained=False, model_dir=None, include=None):
         return desnet(arch, pretrained, model_dir, include)
     else:
         raise ValueError('Unknown Backbone Model: %s' % arch)
-

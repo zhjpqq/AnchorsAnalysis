@@ -142,9 +142,9 @@ class IMDB(object):
         # Active classes
         # Different datasets have different classes, so track the
         # classes supported in the dataset of this image.
+        # 此图片上可能有好多类，但有的class不一定在本次抽取的DataSet中.计算损失时，需要排除这些类.
         active_class_ids = np.zeros([self.class_nums], dtype=np.int32)
-        source_class_ids = self.source_class_ids[self.image_info[image_id]["source"]]
-        active_class_ids[source_class_ids] = 1
+        active_class_ids[class_ids] = 1
 
         # Resize masks to smaller size to reduce memory usage
         if config.USE_MINI_MASK:
@@ -192,11 +192,17 @@ class IMDB(object):
 
     # 映射 源数据集.类标 → 新数据集类标
     def map_source_class_id(self, source_class_id):
-        """Takes a source class ID and returns the int class ID assigned to it.
+        """Takes a source_class_id and returns the it's new assigned class ID in new IMDB .
+        (Source DataSet & old class ID) -> new class Id in New IMDB.
+        图片上一般有多个实例类，但某个类可能不在New IMDB中，可借此函数筛除, 并进一步筛除其ann/gtbox/gtmask等.
         For example:
         self.map_source_class_id("coco.12") -> 23
         """
-        return self.class_from_source_map[source_class_id]
+        try:
+            new_class_id = self.class_from_source_map[source_class_id]
+        except KeyError:
+            new_class_id = None
+        return new_class_id
 
     # 获取类id在源数据集中的id
     def get_source_class_id(self, class_id, source):

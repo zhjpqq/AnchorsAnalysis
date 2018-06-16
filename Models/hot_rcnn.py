@@ -17,7 +17,7 @@ from torch import optim
 from Models.backbone import backbone
 from Models.fusionnet import fusionnet
 from Layers.anchors import generate_anchors, GeneralAnchorLayer, HotAnchorLayer
-from Layers.proposals import HotProposalLayer, GeneralProposalLayer
+from Layers.proposals import select_proposals, HotProposalLayer, RandomProposalLayer
 from Layers.rois_target import RoiTargetLayer
 from Layers.class_bbox_mask import ClassBoxNet, MaskNet
 from Layers.detections import DetectionLayer
@@ -64,13 +64,7 @@ class HotRCNN(nn.Module):
         self.anchors_generate = generate_anchors(config=config)
 
         # Proposals选择层
-        self.proposals_select = HotProposalLayer(counts=config.PROPOSALS_PER_IMAGE,
-                                                 image_shape=config.IMAGE_SHAPE,
-                                                 levels=config.ANCHOR_LEVELS)
-
-        # self.proposals_select = GeneralProposalLayer(counts=config.PROPOSALS_PER_IMAGE,
-        #                                              image_shape=config.IMAGE_SHAPE,
-        #                                              levels=config.ANCHOR_LEVELS)
+        self.proposals_select = select_proposals(config=config)
 
         # ROIs-GT匹配层，Proposal-GTbox匹配，RoiTargetLayer, 训练阶段
         self.rois_target_match = RoiTargetLayer(config=config)
@@ -400,6 +394,13 @@ class HotRCNN(nn.Module):
                 self.load_state_dict(torch.load(filepath))
             else:
                 raise ValueError('未找到权值文件！')
+
+            # Update the log directory if start from ckpt
+            # set the log dir as current ckpt dir.
+            self.set_log_dir(filepath)
+            if not os.path.exists(self.log_dir):
+                os.makedirs(self.log_dir)
+
         elif source == 'backbone':
             state_dict = torch.load(filepath)
             own_state = self.state_dict()
@@ -418,11 +419,6 @@ class HotRCNN(nn.Module):
                                            .format(name, own_state[name].size(), param.size()))
         else:
             raise ValueError('Unknow Weights Source: %s !' % source)
-
-        # Update the log directory
-        self.set_log_dir(filepath)
-        if not os.path.exists(self.log_dir):
-            os.makedirs(self.log_dir)
 
     def frozen_weights(self, layer_regex):
         """Sets model layers as trainable if their names match
@@ -645,7 +641,10 @@ class HotRCNN(nn.Module):
         return self.epoch, self.log_dir, self.checkpoint_path
 
     def get_backone_path(self, path=None):
-        return path if path else os.path.join(self.config.BACKBONE_DIR, self.config.BACKBONE_NAME)
+        if path:
+            return path
+        else:
+            return os.path.join(self.config.BACKBONE_DIR, self.config.BACKBONE_NAME)
 
     def get_weights_path(self, dataset, path=None):
         """Downloads ImageNet trained weights from Keras.

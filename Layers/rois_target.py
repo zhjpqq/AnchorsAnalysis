@@ -170,7 +170,7 @@ class RoiTargetLayer(nn.Module):
         # 3、计算proposals和gt_boxes的Overlaps
         # Compute overlaps matrix [proposals, gt_boxes]
         overlaps = utils.bbox_overlaps(proposals, gt_boxes)  # shape: N×K
-        if crowd_gt_boxes:
+        if crowd_gt_boxes.numel() > 0:
             crowd_overlaps = utils.bbox_overlaps(proposals, crowd_gt_boxes)
             crowd_iou_max = torch.max(crowd_overlaps, dim=1)[0].data
             no_crowd_bool = (crowd_iou_max < 0.001)  # shape: N×K'
@@ -221,7 +221,8 @@ class RoiTargetLayer(nn.Module):
             roi_iou_max, roi_iou_ind = torch.sort(roi_iou_max, dim=0, descending=True)
             positive_count = int(config.TRAIN_ROIS_PER_IMAGE * config.ROIS_POSITIVE_RATIO)
             positive_indices = roi_iou_ind[0: positive_count]
-            print('roi_iou_max max & mid & max : %s, %s, %s' % (roi_iou_max[0], roi_iou_max[positive_count], roi_iou_max[-1]))
+            print('roi_iou_max max & mid & max : %s, %s, %s' % (
+            roi_iou_max[0], roi_iou_max[positive_count], roi_iou_max[-1]))
 
             roi_iou_ind = roi_iou_ind[positive_count:]
             roi_iou_max = roi_iou_max[positive_count:]
@@ -229,7 +230,11 @@ class RoiTargetLayer(nn.Module):
             negative_indices = roi_iou_ind[(roi_iou_max < config.ROIS_GTBOX_IOU[1]) & no_crowd_bool[roi_iou_ind]]
             print('negative_indices.numel()---@rois_target()--:', negative_indices.numel())
             print('proposals numbers : %s' % overlaps.shape[0])
-            # todo ??? hotpoint模式下，非常容易出现所有overlaps>0.7的情况,导致没有负样本
+            # todo ???
+            # hotpoint + hotproposal ，非常容易出现所有overlaps>0.77的情况,导致没有负样本
+            # hotpoint + randomproposal,  bu wending, max<0.7  min>0.7 dou chu xian.
+            # generalpoint + hotproposal,  shuzhi bijiao zheng chang. keyi wu bug yunx wan.
+            # generalpoint + randomproposal,  shuzhi wanquan zheng chang.  haowu renhe bugs.
             vc = torch.randperm(negative_indices.numel())[0: negative_count].cuda()
             negative_indices = negative_indices[torch.randperm(negative_indices.numel())[0: negative_count].cuda()]
             roi_iou_max, roi_iou_ind, index = None, None, None

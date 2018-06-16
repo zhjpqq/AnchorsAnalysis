@@ -30,7 +30,6 @@ from pycocotools import mask as maskUtils
 
 
 class CocoDataset(IMDB, Dataset):
-
     def __getitem__(self, image_index):
         """获取单张image数据，区别于generate获取一个batch的images数据"""
 
@@ -73,6 +72,16 @@ class CocoDataset(IMDB, Dataset):
         return self.load_coco(*args, **kwargs)
 
     def load_coco(self, data_dir, subset, year, class_ids=None, class_map=None, auto_download=None, **kwargs):
+        """
+        :param data_dir:
+        :param subset:
+        :param year:
+        :param class_ids:  class ids in original dataset. == category ids. zhiding jiazai qizhon de naxie lei.
+        :param class_map:
+        :param auto_download:
+        :param kwargs:
+        :return:
+        """
 
         if auto_download is True:
             self.auto_download(data_dir, subset, year)
@@ -85,7 +94,7 @@ class CocoDataset(IMDB, Dataset):
         # Load all classes or a subset?
         # 添加需要的类id，所有类，还是其子集
         if not class_ids:
-            # All classes
+            # All classes, Note in coco2014, class index from 0 to 90, skip some val, so only have 80 classes.
             class_ids = sorted(coco.getCatIds())
         # Load  all images or a subset?
         # 添加需要的图片id，还是某些类构成的子集
@@ -94,16 +103,18 @@ class CocoDataset(IMDB, Dataset):
             for id in class_ids:
                 image_ids.extend(list(coco.getImgIds(catIds=[id])))
             # Remove duplicates
+            # 82081  in coco2014  < coco.getImgIds(), others 783 not contain any  classes.
             image_ids = list(set(image_ids))
         else:
-            # All images
+            # All images   # 82783  in coco2014
             image_ids = list(coco.imgs.keys())
 
         # 根据选择出的 class-ids 和 image-ids 添加更加详细的 class-info 和 image-info
 
         # Add classes 添加类信息 class_info
-        for i in class_ids:
-            self.add_class("coco", i, coco.loadCats(i)[0]["name"])
+        for id in class_ids:
+            # cat = coco.loadCats(id)      # [{'supercategory': 'person', 'id': 1, 'name': 'person'}]
+            self.add_class("coco", id, coco.loadCats(id)[0]["name"])
 
         # Add images  添加图片信息 image_info
         for i in image_ids:
@@ -120,7 +131,7 @@ class CocoDataset(IMDB, Dataset):
 
     def load_mask(self, image_id):
         """Load instance masks for the given image.
-        一张图片上可能有多个物体，且分属不同的类，此处要使用源数据集中的类标id。
+        一张图片上可能有多个物体，且分属不同的类.
         image_id → (instance_mask，class_ID)×N
 
         不同数据集使用不同方法存储masks.
@@ -188,7 +199,7 @@ class CocoDataset(IMDB, Dataset):
                 if x1 < 0 or y1 < 0 or h < 1 or w < 1 or annotation['area'] < 0:
                     print('warning: bbox value error... todo???')
                     continue
-                x2, y2 = x1 + w, y1 + h     # x2, y2 should not in bbox @ cocoapi/loadRes()
+                x2, y2 = x1 + w, y1 + h  # x2, y2 should not in bbox @ cocoapi/loadRes()
                 instance_bboxes.append(np.array([y1, x1, y2, x2]))
                 class_ids.append(class_id)
 

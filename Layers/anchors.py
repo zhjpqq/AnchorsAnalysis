@@ -117,6 +117,7 @@ class HotAnchorLayer(nn.Module):
         for b in range(x.size(0)):
             fmap = x[b, :, :, :]
             fmap = torch.sum(torch.abs(fmap - torch.mean(torch.mean(fmap, 1, True), 2, True)), 0)
+            # fmap = torch.sum(torch.abs(fmap), dim=0)
             kval, _ = torch.topk(fmap.view(-1), k=counts)
             points = np.where((fmap >= kval[-1]).data)  # maybe > counts
             points_y = torch.FloatTensor(points[0][0:counts]).contiguous().cuda()
@@ -231,7 +232,8 @@ class GeneralAnchorLayer(nn.Module):
                                              self.counts, self.levels, self.zero_area,
                                              self.feature_shapes, self.feature_strides)
 
-    def generate_pyramid_anchors(self, scales, ratios, stride, counts, levels, zero_area, feature_shapes, feature_strides):
+    def generate_pyramid_anchors(self, scales, ratios, stride, counts, levels, zero_area, feature_shapes,
+                                 feature_strides):
         """Generate anchors at different levels of a feature pyramid. Each scale
         is associated with a level of the pyramid, but each ratio is used in
         all levels of the pyramid.
@@ -317,7 +319,6 @@ class GeneralAnchorLayer(nn.Module):
 
 
 def generate_anchors(config, method=None):
-
     if config.ANCHOR_METHOD == 'general':
 
         anchors_generate = GeneralAnchorLayer(scales=config.ANCHOR_SCALES,
