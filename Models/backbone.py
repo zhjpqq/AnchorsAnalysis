@@ -8,7 +8,7 @@ import torch.utils.model_zoo as model_zoo
 from torchvision.models.resnet import BasicBlock, Bottleneck, model_urls
 from torch import nn
 import math
-
+import visdom
 
 class ResNet(nn.Module):
     """

@@ -23,11 +23,11 @@ class DetectionLayer(nn.Module):
         super(DetectionLayer, self).__init__()
         self.config = config
 
-    def forward(self, rois, class_probs, bbox_deltas, image_metas, normalized=False, config=None):
-        return pyramid_detection_layer(rois, class_probs, bbox_deltas, image_metas, normalized, config)
+    def forward(self, rois, class_probs, bbox_deltas, image_metas, normalized=False):
+        return pyramid_detection_layer(rois, class_probs, bbox_deltas, image_metas, normalized, self.config)
 
 
-def pyramid_detection_layer(rois, class_probs, bbox_deltas, image_metas, normalized=False, config=None):
+def pyramid_detection_layer(rois, class_probs, bbox_deltas, image_metas, normalized, config):
     """Takes classified proposal boxes and their bounding box deltas and
     returns the final detection boxes.  整理对ROIs的检测结果，返回最终检测结果Detections
 

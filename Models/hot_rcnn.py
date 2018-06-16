@@ -16,8 +16,8 @@ from torch import optim
 
 from Models.backbone import backbone
 from Models.fusionnet import fusionnet
-from Layers.anchors import PyramidAnchorLayer, HotAnchorLayer
-from Layers.proposals import HotProposalLayer
+from Layers.anchors import generate_anchors, GeneralAnchorLayer, HotAnchorLayer
+from Layers.proposals import HotProposalLayer, GeneralProposalLayer
 from Layers.rois_target import RoiTargetLayer
 from Layers.class_bbox_mask import ClassBoxNet, MaskNet
 from Layers.detections import DetectionLayer
@@ -61,31 +61,16 @@ class HotRCNN(nn.Module):
                                    stages=config.BACKBONE_STAGES)
 
         # Anchors生成层
-        self.anchors_generate = PyramidAnchorLayer(scales=config.ANCHOR_SCALES,
-                                                   ratios=config.ANCHOR_ASPECTS,
-                                                   stride=config.ANCHOR_STRIDE,
-                                                   counts=config.ANCHORS_PER_IMAGE,
-                                                   levels=config.ANCHOR_LEVELS,
-                                                   zero_area=config.ANCHOR_ZERO_AREA,
-                                                   image_shape=config.IMAGE_SHAPE,
-                                                   feature_shapes=config.FUSION_SHAPES,
-                                                   feature_strides=config.FUSION_STRIDES)
-
-        self.anchors_generate = HotAnchorLayer(scales=config.ANCHOR_SCALES,
-                                               ratios=config.ANCHOR_ASPECTS,
-                                               stride=config.ANCHOR_STRIDE,
-                                               counts=config.ANCHORS_PER_IMAGE,
-                                               levels=config.ANCHOR_LEVELS,
-                                               method=config.ANCHOR_METHOD,
-                                               zero_area=config.ANCHOR_ZERO_AREA,
-                                               image_shape=config.IMAGE_SHAPE,
-                                               feature_shapes=config.FUSION_SHAPES,
-                                               feature_strides=config.FUSION_STRIDES)
+        self.anchors_generate = generate_anchors(config=config)
 
         # Proposals选择层
         self.proposals_select = HotProposalLayer(counts=config.PROPOSALS_PER_IMAGE,
                                                  image_shape=config.IMAGE_SHAPE,
                                                  levels=config.ANCHOR_LEVELS)
+
+        # self.proposals_select = GeneralProposalLayer(counts=config.PROPOSALS_PER_IMAGE,
+        #                                              image_shape=config.IMAGE_SHAPE,
+        #                                              levels=config.ANCHOR_LEVELS)
 
         # ROIs-GT匹配层，Proposal-GTbox匹配，RoiTargetLayer, 训练阶段
         self.rois_target_match = RoiTargetLayer(config=config)

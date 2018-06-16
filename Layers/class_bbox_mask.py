@@ -56,13 +56,15 @@ class ClassBoxNet(nn.Module):
             class_probs:  [batch*N, class_nums, (probs)]
             bbox_deltas:  [batch*N, class_nums, (dy, dx, dw, dh)]
         """
-        # todo ??? 返回Shape: [batch×num_rois, channels, pool_height, pool_width]
 
         if self.level_nums == 1 and len(x) == 1 and len(rois) == 1:
-            rois = rois_expand(rois[0]).view(-1, 5)  # shape: [batch*N, (batch_index, y2, x2, y1, x1)]
+            # shape: [batch*N, (batch_index, y2, x2, y1, x1)]
+            rois = rois_expand(rois[0]).view(-1, 5)
+            # 返回Shape: [batch×num_rois, channels, pool_height, pool_width]
             x = RoIAlignAvg(self.pool_size[0], self.pool_size[1], self.fmap_stride[0])(x[0], rois)
 
         elif self.level_nums > 1 and len(x) > 1 and len(rois) == 1:
+            # todo Error !!!
             x = pyramid_roi_align(x, rois[0], self.pool_size, self.image_shape)
 
         elif self.level_nums > 1 and len(x) > 1and len(rois) > 1:

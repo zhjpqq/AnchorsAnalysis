@@ -13,7 +13,6 @@ import torch.nn.functional as F
 class FPNet(nn.Module):
     def __init__(self, indepth, outdepth, stages):
         super(FPNet, self).__init__()
-        indepth = np.sort(np.array(indepth))    # [256,512,1024,2048]
         self.stages = stages
         self.P6 = nn.MaxPool2d(kernel_size=1, stride=2)
         self.P5_conv1 = nn.Conv2d(indepth[3], outdepth, kernel_size=1, stride=1)
@@ -38,7 +37,7 @@ class FPNet(nn.Module):
         )
 
     def forward(self, feature_maps):
-        C1, C2, C3, C4, C5 = feature_maps
+        _, C2, C3, C4, C5, _ = feature_maps
         p5_out = self.P5_conv1(C5)
         p4_out = self.P4_conv1(C4) + F.upsample(p5_out, scale_factor=2)
         p3_out = self.P3_conv1(C3) + F.upsample(p4_out, scale_factor=2)

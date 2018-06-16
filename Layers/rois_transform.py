@@ -91,7 +91,8 @@ def pyramid_roi_align(feature_maps, rois, pool_size, image_shape):
             # Here we use the simplified approach of a single value per bin,
             # which is how it's done in tf.crop_and_resize()
             # Result: [batch * num_boxes, pool_height, pool_width, channels]    # todo ??? channels
-            ind = b * Variable(torch.ones(level_boxes.size()[0]), requires_grad=False).int().cuda()  # todo ??? b
+            # ind = b * Variable(torch.ones(level_boxes.size()[0]), requires_grad=False).int().cuda()  # todo ??? b
+            ind = Variable(torch.zeros(level_boxes.size()[0]), requires_grad=False).int()
             # feature_maps[i] = feature_maps[i].unsqueeze(0)  # CropAndResizeFunction needs batch dimension
             pooled_features = CropAndResizeFunction(pool_size, pool_size, 0)(feature_maps[i], level_boxes, ind)
             pooled.append(pooled_features)

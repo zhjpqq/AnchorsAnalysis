@@ -20,7 +20,8 @@ def fusionnet(method, levels, stages, indepth, outdepth, strides, shapes):
     """
     stages = [int(s[1]) - 1 for s in stages]
     if method == 'fpn':
-        assert len(indepth) == levels - 1, '输入特征级数与指定的FUSION_LEVELS不匹配！'
+        # [P2,P3,P4,P5,P6], P6 is upsampled form P5
+        assert len(stages) == levels, '输入特征级数与指定的FUSION_LEVELS不匹配！'
         net = FPNet(indepth=indepth, outdepth=outdepth, stages=stages)
 
     elif method == 'lsc':

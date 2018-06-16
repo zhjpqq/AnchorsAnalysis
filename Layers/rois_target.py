@@ -221,11 +221,15 @@ class RoiTargetLayer(nn.Module):
             roi_iou_max, roi_iou_ind = torch.sort(roi_iou_max, dim=0, descending=True)
             positive_count = int(config.TRAIN_ROIS_PER_IMAGE * config.ROIS_POSITIVE_RATIO)
             positive_indices = roi_iou_ind[0: positive_count]
+            print('roi_iou_max max & mid & max : %s, %s, %s' % (roi_iou_max[0], roi_iou_max[positive_count], roi_iou_max[-1]))
+
             roi_iou_ind = roi_iou_ind[positive_count:]
             roi_iou_max = roi_iou_max[positive_count:]
             negative_count = config.TRAIN_ROIS_PER_IMAGE - positive_count
             negative_indices = roi_iou_ind[(roi_iou_max < config.ROIS_GTBOX_IOU[1]) & no_crowd_bool[roi_iou_ind]]
-            print('positive_/negative_indices.numel()---@rois_target()--:', positive_indices.numel()/negative_indices.numel())
+            print('negative_indices.numel()---@rois_target()--:', negative_indices.numel())
+            print('proposals numbers : %s' % overlaps.shape[0])
+            # todo ??? hotpoint模式下，非常容易出现所有overlaps>0.7的情况,导致没有负样本
             vc = torch.randperm(negative_indices.numel())[0: negative_count].cuda()
             negative_indices = negative_indices[torch.randperm(negative_indices.numel())[0: negative_count].cuda()]
             roi_iou_max, roi_iou_ind, index = None, None, None
