@@ -248,8 +248,8 @@ class HotRCNN(nn.Module):
         self.set_trainable(layers)
 
         # data iterator # not generator!
-        trainset_loader = DataLoader(train_dataset, batch_size=1, shuffle=True, num_workers=4)
-        valset_loader = DataLoader(val_dataset, batch_size=1, shuffle=True, num_workers=4)
+        trainset_iter = DataLoader(train_dataset, batch_size=1, shuffle=True, num_workers=4)
+        valset_iter = DataLoader(val_dataset, batch_size=1, shuffle=True, num_workers=4)
 
         # Optimizer object
         # Add L2 Regularization
@@ -266,10 +266,10 @@ class HotRCNN(nn.Module):
             utils.log("Epoch {}/{}.".format(epoch, epochs))
 
             # Training
-            train_loss = self.train_epoch(trainset_loader, optimizer, self.config.TRAIN_STEPS_PER_EPOCH)
+            train_loss = self.train_epoch(trainset_iter, optimizer, self.config.TRAIN_STEPS_PER_EPOCH)
 
             # Validation
-            val_loss = self.valid_epoch(valset_loader, self.config.VAL_STEPS_PER_EPOCH)
+            val_loss = self.valid_epoch(valset_iter, self.config.VAL_STEPS_PER_EPOCH)
 
             # Statistics
             self.train_loss_history.append(train_loss)
