@@ -46,9 +46,16 @@ def uniform_centers(fmaps, counts, imag_shape, anchor_stride=1):
 def edges_centers(fmaps, counts, imag_shape):
     # fmaps [b, c, h, w]
     fmaps = fmaps.data[0, :, :, :]
-    h, w = fmaps.shape[1:]
+    assert fmaps.shape[0] == 3
+    fmaps = fmaps.permute(0, 1, 2)
+    h, w = fmaps.shape[0:2]
     fmap_stride = imag_shape / h
-    
+
+    cv2.imshow("curr_fmaps", fmaps)
+    fmaps = cv2.cvtColor(fmaps, cv2.COLOR_BGR2GRAY)
+    edges = cv2.Canny(fmaps, 100, 200)
+    cv2.imshow("curr_fmaps", fmaps)
+    edges = np.where(edges)
 
 
 def hot_centers(fmaps, counts, imag_shape):
