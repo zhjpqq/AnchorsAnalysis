@@ -9,8 +9,8 @@ from torch.autograd import Variable
 from torch import nn
 
 from DataSets.imdb import IMDB
-from NMS1.nms.nms_wrapper import nms as nms_func1
-from NMS2.nms.nms_wrapper import nms as nms_func2
+from NMS_Option.NMS1.nms.nms_wrapper import nms as nms_func1
+from NMS_Option.NMS2.nms.nms_wrapper import nms as nms_func2
 from Utils import utils
 
 

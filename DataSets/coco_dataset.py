@@ -30,7 +30,33 @@ from pycocotools import mask as maskUtils
 
 
 class CocoDataset(IMDB, Dataset):
+
     def __getitem__(self, image_index):
+        image_id = self.image_ids[image_index]
+        image, image_meta, gt_class_ids, gt_boxes = \
+            self.load_image_gtbbox(image_id=image_id, config=self.config,
+                                   rgbmean=True, augment=False, box_format='yxhw')
+
+        # 去空值
+        if not np.any(gt_class_ids > 0):
+            return None
+
+        # 去多余
+        # If more instances than fits in the array, sub-sample from them.
+        if gt_boxes.shape[0] > self.config.MAX_GT_INSTANCES:
+            ids = np.random.choice(np.arange(gt_boxes.shape[0]), self.config.MAX_GT_INSTANCES, replace=False)
+            gt_class_ids = gt_class_ids[ids]
+            gt_boxes = gt_boxes[ids]
+
+        # 转换为Tensor
+        image = torch.from_numpy(image).float()
+        image_meta = torch.from_numpy(image_meta)
+        gt_class_ids = torch.from_numpy(gt_class_ids)
+        gt_boxes = torch.from_numpy(gt_boxes).float()
+
+        return image, image_meta, gt_class_ids, gt_boxes
+
+    def __getitemx__(self, image_index):
         """获取单张image数据，区别于generate获取一个batch的images数据"""
 
         image_id = self.image_ids[image_index]
@@ -184,7 +210,7 @@ class CocoDataset(IMDB, Dataset):
             # Call super class to return an empty mask
             return super(CocoDataset, self).load_mask(image_id)
 
-    def load_bbox(self, image_id):
+    def load_bbox(self, image_id, box_format='y1x1y2x2'):
         # If not a COCO image, delegate to parent class.
         image_info = self.image_info[image_id]
         if image_info["source"] != "coco":
@@ -199,8 +225,15 @@ class CocoDataset(IMDB, Dataset):
                 if x1 < 0 or y1 < 0 or h < 1 or w < 1 or annotation['area'] < 0:
                     print('warning: bbox value error... todo???')
                     continue
-                x2, y2 = x1 + w, y1 + h  # x2, y2 should not in bbox @ cocoapi/loadRes()
-                instance_bboxes.append(np.array([y1, x1, y2, x2]))
+                if box_format == 'y1x1y2x2':
+                    # x2, y2 should not in bbox @ cocoapi/loadRes()
+                    x2, y2 = x1 + w, y1 + h
+                    instance_bboxes.append(np.array([y1, x1, y2, x2]))
+                elif box_format == 'y1x1hw':
+                    instance_bboxes.append(np.array([y1, x1, h, w]))
+                elif box_format == 'yxhw':
+                    ctr_y, ctr_x = y1 + 0.5*h, x1 + 0.5*w
+                    instance_bboxes.append(np.array([ctr_y, ctr_x, h, w]))
                 class_ids.append(class_id)
 
         # Pack instance masks into an array

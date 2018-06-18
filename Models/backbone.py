@@ -9,6 +9,7 @@ from torchvision.models.resnet import BasicBlock, Bottleneck, model_urls
 from torch import nn
 import math
 import visdom
+import os
 
 
 class ResNet(nn.Module):
@@ -78,10 +79,9 @@ class ResNet(nn.Module):
         # x = x.view(x.size(0), -1)
         # x = self.fc(x)
 
-        # P0, P1, P2, P3, P4, P5, P6 = [C0.data.cpu(), C1.data.cpu(), C2.data.cpu(), C3.data.cpu(), C4.data.cpu(),
-        #                               C5.data.cpu(), C6.data.cpu()]
-        vs = visdom.Visdom()
-        vs.images(C0.data.cpu())
+        # P0, P1, P2, P3, P4, P5, P6 = [C0.data.cpu(), C1.data.cpu(), C2.data.cpu(), C3.data.cpu(), C4.data.cpu(), C5.data.cpu(), C6.data.cpu()]
+        # vs = visdom.Visdom()
+        # vs.images(C0.data.cpu())
         # vs.images(P1[:, 3:6, :, :])
         # vs.images(P2[:, 3:6, :, :])
         # vs.images(P3[:, 3:6, :, :])
@@ -89,10 +89,10 @@ class ResNet(nn.Module):
         # vs.images(P5[:, 3:6, :, :])
 
         # BACKBONE_CHANNELS = [64, 256, 512, 1024, 2048, 2048]
-        return [C1, C2, C3, C4, C5, C6]
+        return [C0, C1, C2, C3, C4, C5, C6]
 
 
-def resnet18(pretrained=False, model_dir=None, **kwargs):
+def resnet18(pretrained=False, model_dir=None, model_name=None, **kwargs):
     """Constructs a ResNet-18 model.
 
     Args:
@@ -100,11 +100,11 @@ def resnet18(pretrained=False, model_dir=None, **kwargs):
     """
     model = ResNet(BasicBlock, [2, 2, 2, 2], **kwargs)
     if pretrained:
-        model.load_state_dict(model_zoo.load_url(model_urls['resnet18'], model_dir))
+        model = resnet_load(model, 'resnet18', model_dir, model_name)
     return model
 
 
-def resnet34(pretrained=False, model_dir=None, **kwargs):
+def resnet34(pretrained=False, model_dir=None, model_name=None, **kwargs):
     """Constructs a ResNet-34 model.
 
     Args:
@@ -112,11 +112,11 @@ def resnet34(pretrained=False, model_dir=None, **kwargs):
     """
     model = ResNet(BasicBlock, [3, 4, 6, 3], **kwargs)
     if pretrained:
-        model.load_state_dict(model_zoo.load_url(model_urls['resnet34'], model_dir))
+        model = resnet_load(model, 'resnet34', model_dir, model_name)
     return model
 
 
-def resnet50(pretrained=False, model_dir=None, **kwargs):
+def resnet50(pretrained=False, model_dir=None, model_name=None, **kwargs):
     """Constructs a ResNet-50 model.
 
     Args:
@@ -124,11 +124,11 @@ def resnet50(pretrained=False, model_dir=None, **kwargs):
     """
     model = ResNet(Bottleneck, [3, 4, 6, 3], **kwargs)
     if pretrained:
-        model.load_state_dict(model_zoo.load_url(model_urls['resnet50'], model_dir))
+        model = resnet_load(model, 'resnet50', model_dir, model_name)
     return model
 
 
-def resnet101(pretrained=False, model_dir=None, **kwargs):
+def resnet101(pretrained=False, model_dir=None, model_name=None, **kwargs):
     """Constructs a ResNet-101 model.
 
     Args:
@@ -136,11 +136,11 @@ def resnet101(pretrained=False, model_dir=None, **kwargs):
     """
     model = ResNet(Bottleneck, [3, 4, 23, 3], **kwargs)
     if pretrained:
-        model.load_state_dict(model_zoo.load_url(model_urls['resnet101'], model_dir))
+        model = resnet_load(model, 'resnet101', model_dir, model_name)
     return model
 
 
-def resnet152(pretrained=False, model_dir=None, **kwargs):
+def resnet152(pretrained=False, model_dir=None, model_name=None, **kwargs):
     """Constructs a ResNet-152 model.
 
     Args:
@@ -148,11 +148,22 @@ def resnet152(pretrained=False, model_dir=None, **kwargs):
     """
     model = ResNet(Bottleneck, [3, 8, 36, 3], **kwargs)
     if pretrained:
-        model.load_state_dict(model_zoo.load_url(model_urls['resnet152'], model_dir))
+        model = resnet_load(model, 'resnet152', model_dir, model_name)
     return model
 
 
-def resnet(arch, pretrained=False, model_dir=None, include=None):
+def resnet_load(model, arch_name, model_dir, model_name, dowload=False):
+    model_path = os.path.join(model_dir, model_name)
+    if os.access(model_path, os.R_OK):
+        model.load_state_dict(torch.load(f=model_path))
+    elif dowload:
+        model.load_state_dict(model_zoo.load_url(model_urls[arch_name], model_dir))
+    else:
+        raise Exception('无法找到resnet预训练文件，请手动下载到指定路径，或开启自动下载.')
+    return model
+
+
+def resnet(arch, pretrained=False, model_dir=None, model_name=None, include=None):
     """
     :param arch:
     :param pretrained:
@@ -162,35 +173,35 @@ def resnet(arch, pretrained=False, model_dir=None, include=None):
     arch = arch.lower()
 
     if arch == 'resnet18':
-        model = resnet18(pretrained, model_dir)
+        model = resnet18(pretrained, model_dir, model_name)
     elif arch == 'resnet34':
-        model = resnet34(pretrained, model_dir)
+        model = resnet34(pretrained, model_dir, model_name)
     elif arch == 'resnet50':
-        model = resnet50(pretrained, model_dir)
+        model = resnet50(pretrained, model_dir, model_name)
     elif arch == 'resnet101':
-        model = resnet101(pretrained, model_dir)
+        model = resnet101(pretrained, model_dir, model_name)
     elif arch == 'resnet152':
-        model = resnet152(pretrained, model_dir)
+        model = resnet152(pretrained, model_dir, model_name)
     else:
         raise ValueError('错误的arch代码！')
 
     return model
 
 
-def vgg(arch, pretrained=False, model_dir=None, include=None):
+def vgg(arch, pretrained=False, model_dir=None, model_name=None, include=None):
     raise NotImplementedError
 
 
-def desnet(arch, pretrained=False, model_dir=None, include=None):
+def desnet(arch, pretrained=False, model_dir=None, model_name=None, include=None):
     raise NotImplementedError
 
 
-def backbone(arch, pretrained=False, model_dir=None, include=None):
+def backbone(arch, pretrained=False, model_dir=None, model_name=None, include=None):
     if 'resnet' in arch:
-        return resnet(arch, pretrained, model_dir, include)
+        return resnet(arch, pretrained, model_dir, model_name, include)
     elif 'vgg' in arch:
-        return vgg(arch, pretrained, model_dir, include)
+        return vgg(arch, pretrained, model_dir, model_name, include)
     elif 'desnet' in arch:
-        return desnet(arch, pretrained, model_dir, include)
+        return desnet(arch, pretrained, model_dir, model_name, include)
     else:
         raise ValueError('Unknown Backbone Model: %s' % arch)

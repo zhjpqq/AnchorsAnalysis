@@ -93,7 +93,7 @@ class IMDB(object):
         return mask, class_ids
 
     # 加载bbox
-    def load_bbox(self, image_id):
+    def load_bbox(self, image_id, box_format):
         """
         bboxs: np.array([counts, (y1, x1, y2, x2)])
         """
@@ -156,10 +156,10 @@ class IMDB(object):
         return image, image_meta, class_ids, bbox, mask
 
     # 为单张图片加载 gt_class_ids gt_bbox
-    def load_image_gtbbox(self, image_id, config, rgbmean=True, augment=False):
-        # bbox: [num_instances, (y1, x1, y2, x2)]
+    def load_image_gtbbox(self, image_id, config, rgbmean=True, augment=False, box_format='y1x1y2x2'):
+        # bboxes: [num_instances, (y1, x1, y2, x2)]
         image = self.load_image(image_id)
-        bboxes, class_ids = self.load_bbox(image_id)
+        bboxes, class_ids = self.load_bbox(image_id, box_format)
         shape = image.shape
         if rgbmean:
             image = self.mold_image(image, config.MEAN_PIXEL)
@@ -174,16 +174,11 @@ class IMDB(object):
             image = np.fliplr(image)
             bboxes = np.fliplr(bboxes)
 
-        # Bounding boxes. Note that some boxes might be all zeros
-        # if the corresponding mask got cropped out.
-        # bbox = self.extract_bboxes(mask)
-
         # Active classes
         # Different datasets have different classes, so track the
         # classes supported in the dataset of this image.
         active_class_ids = np.zeros([self.class_nums], dtype=np.int32)
-        source_class_ids = self.source_class_ids[self.image_info[image_id]["source"]]
-        active_class_ids[source_class_ids] = 1
+        active_class_ids[class_ids] = 1
 
         # Image meta data
         image_meta = self.compose_image_meta(image_id, shape, window, active_class_ids)
