@@ -473,7 +473,7 @@ class IMDB(object):
         # 缩放之后，图像形状保持不变，round(h*scale)/round(w*scale)=h/w，因此对w和h，scale必须是统一的。
         if scale != 1:
             image = scipy.misc.imresize(image, (round(h * scale), round(w * scale)))
-        # Need padding? 先缩放再平移
+        # Need padding 先缩放再平移
         if padding:
             # Get new height and width
             h, w = image.shape[:2]
@@ -489,7 +489,7 @@ class IMDB(object):
     @staticmethod
     def resize_bbox(bbox, scale, padding):
         # [N, (y1, x1, y2, x2)]
-        # + top_pad   + left_pad
+        # y + top_pad,  x + left_pad
         bbox = np.round(bbox * scale)
         bbox[:, 0] += padding[0][0]
         bbox[:, 2] += padding[0][0]

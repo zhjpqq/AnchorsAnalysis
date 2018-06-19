@@ -10,7 +10,7 @@ import skimage
 import numpy as np
 
 dir = 'G://MSCOCO2017//val2017'
-name = '000000079651.jpg'
+name = '000000086483.jpg'
 path = os.path.join(dir, name)
 
 print('文件存在吗？', os.path.isfile(path), os.access(path, os.R_OK))
@@ -25,7 +25,7 @@ cv2.imshow("img", img)
 gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
 cv2.imshow("gray", gray)
 
-edges = cv2.Canny(gray, 100, 200)
+edges = cv2.Canny(gray, 260, 200)
 rows, clos = np.where(edges)
 cv2.imshow("edges", edges)
 

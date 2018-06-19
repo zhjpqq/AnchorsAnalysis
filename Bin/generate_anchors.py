@@ -17,7 +17,7 @@ from DataSets.coco_dataset import CocoDataset
 from Configs.config import CocoConfig
 from Models.backbone import backbone
 from Models.fusionnet import fusionnet
-from Layers.centers import generate_centers, compute_distance, compute_matches
+from Layers.centers import generate_centers, compute_distance, compute_matches, compute_histogram
 
 # 设定路径
 curr_dir = os.getcwd()
@@ -65,37 +65,77 @@ valset_iter = DataLoader(dataset_val, batch_size=1, shuffle=True, num_workers=4)
 
 # 构造网络模型
 model = backbone(arch='resnet50', pretrained=True, model_dir=backbone_dir, model_name=backbone_name)
-fusion = fusionnet(stages=config.BACKBONE_STAGES,
-                   method=config.FUSION_METHOD,
+fusion = fusionnet(method=config.FUSION_METHOD,
                    levels=config.FUSION_LEVELS,
                    indepth=config.FUSION_CHANNELS_IN,
                    outdepth=config.FUSION_CHANNELS_OUT,
                    strides=config.FUSION_STRIDES,
-                   shapes=config.FUSION_SHAPES)
-# 生成锚点
+                   shapes=config.FUSION_SHAPES,
+                   stages=config.BACKBONE_STAGES)
+model.eval()
+fusion.eval()
+
 dataset_iter = [trainset_iter, valset_iter][0]
+image_nums = dataset_iter.dataset.image_nums
+
+# 生成锚点
 counts = 500
+
+# 采样命中率PDF
+bin_width = 1
+bin_size = 10
+bin_min = 0
+bin_max = bin_min + bin_width * bin_size
+point_arrs = np.zeros([bin_size, 2]).astype(np.float32)
+point_arrs[:, 0] = np.arange(bin_min, bin_max, step=bin_width)
+
+# 采样效率pdf
+hotok_arrs = np.zeros(image_nums).astype(np.float32)
+
+idx = 0
+stop = 500
 for inputs in dataset_iter:
     #  Wrap all Tensor in Variable
     images = Variable(inputs[0]).cuda()
     image_metas = inputs[1].numpy()
     gt_class_ids = Variable(inputs[2]).cuda()
-    gt_boxes = Variable(inputs[3]).cuda()       # [y1, x1, y2, x2]
+    gt_boxes = Variable(inputs[3]).cuda()       # [y, x, h, w]
 
-    model.eval()
     # [C0, C1, C2, C3, C4, C5, C6]
     feature_maps = model(images)
 
     # [P2, P3, P4, P5, P6]
-    feature_maps = fusion(feature_maps[1:])
+    # feature_maps = fusion(feature_maps[1:])
 
-    centers = generate_centers(feature_maps, counts, method='uniform')
+    centers = generate_centers(feature_maps, counts, image_meta=image_metas, method='uniform')
 
+    # [N, K, (dist)]
     distance = compute_distance(centers, gt_boxes)
 
-    matches = compute_matches(distance, threshold=1.414)
+    # [d0, d1, d2, ...] or hitok
+    # matches = compute_matches(distance, threshold=None)
 
     # 计算命中率PDF
-
+    matches = compute_matches(distance, threshold=None)
+    point_arrs = compute_histogram(point_arrs, matches)
 
     # 计算采样效率曲线
+    hitok = compute_matches(distance, threshold=4)
+    hotok_arrs[idx] = hitok
+
+    if idx < stop:
+        idx += 1
+    else:
+        break
+
+print('喵，喵，喵，喵 ....')
+
+
+
+
+
+
+
+
+
+
