@@ -8,6 +8,9 @@ import sys
 import math
 import cv2
 import numpy as np
+import pylab
+import matplotlib.pyplot as plt
+import matplotlib
 import torch
 import torch.nn as nn
 from torch.autograd import Variable
@@ -77,6 +80,8 @@ fusion.eval()
 
 dataset_iter = [trainset_iter, valset_iter][0]
 image_nums = dataset_iter.dataset.image_nums
+idx = 0
+stop_idx = 500
 
 # 生成锚点
 counts = 500
@@ -90,16 +95,14 @@ point_arrs = np.zeros([bin_size, 2]).astype(np.float32)
 point_arrs[:, 0] = np.arange(bin_min, bin_max, step=bin_width)
 
 # 采样效率pdf
-hotok_arrs = np.zeros(image_nums).astype(np.float32)
+hotok_arrs = np.zeros(stop_idx).astype(np.float32)
 
-idx = 0
-stop = 500
 for inputs in dataset_iter:
     #  Wrap all Tensor in Variable
     images = Variable(inputs[0]).cuda()
     image_metas = inputs[1].numpy()
     gt_class_ids = Variable(inputs[2]).cuda()
-    gt_boxes = Variable(inputs[3]).cuda()       # [y, x, h, w]
+    gt_boxes = Variable(inputs[3]).cuda()  # [y, x, h, w]
 
     # [C0, C1, C2, C3, C4, C5, C6]
     feature_maps = model(images)
@@ -123,19 +126,15 @@ for inputs in dataset_iter:
     hitok = compute_matches(distance, threshold=4)
     hotok_arrs[idx] = hitok
 
-    if idx < stop:
+    if idx < stop_idx:
         idx += 1
     else:
         break
 
 print('喵，喵，喵，喵 ....')
-
-
-
-
-
-
-
-
-
-
+fig = plt.figure()
+ax1 = fig.add_subplot(2, 1, 1)
+ax2 = fig.add_subplot(2, 1, 2)
+ax1.plot(point_arrs[:, 0], point_arrs[:, 1])
+ax2.hist(hotok_arrs, bins=20, normed=False)
+plt.show()
