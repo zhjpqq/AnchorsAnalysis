@@ -50,11 +50,10 @@ class NoneNet(nn.Module):
         super(NoneNet, self).__init__()
         self.indepth = indepth
         self.outdepth = outdepth
-        assert len(stages) == 1
-        self.stages = stages[0]
+        self.stages = stages
         # self.none = nn.Sequential(
         #     nn.Conv2d(indepth, outdepth, (1, 1), stride=1, padding=0)
         # )
 
     def forward(self, feature_maps):
-        return [feature_maps[self.stages]]
+        return feature_maps

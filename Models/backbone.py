@@ -57,7 +57,10 @@ class ResNet(nn.Module):
 
         return nn.Sequential(*layers)
 
-    def forward(self, x):
+    def forward(self, x, stages=['C0', 'C1', 'C2', 'C3', 'C4', 'C5', 'C6']):
+        # stages: subset in ['C0', C1','C2','C3','C4','C5','C6']
+        # BACKBONE_CHANNELS = [3, 64, 256, 512, 1024, 2048, 2048]
+        # BACKBONE_STRIDES = [1, 2, 4, 8, 16, 32, 39.38]
         C0 = x
         x = self.conv1(x)
         x = self.bn1(x)
@@ -88,8 +91,9 @@ class ResNet(nn.Module):
         # vs.images(P4[:, 3:6, :, :])
         # vs.images(P5[:, 3:6, :, :])
 
-        # BACKBONE_CHANNELS = [64, 256, 512, 1024, 2048, 2048]
-        return [C0, C1, C2, C3, C4, C5, C6]
+        fmaps = [C0, C1, C2, C3, C4, C5, C6]
+        fmaps = [fmaps[i] for i in range(len(fmaps)) if str(i) in ''.join(stages)]
+        return fmaps
 
 
 def resnet18(pretrained=False, model_dir=None, model_name=None, **kwargs):

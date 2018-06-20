@@ -8,6 +8,8 @@ import math
 import random
 import numpy as np
 import scipy.misc
+from scipy import ndimage
+from scipy.ndimage import zoom
 import skimage.color
 import skimage.io
 import cv2
@@ -24,7 +26,6 @@ from Utils import utils
 
 
 class IMDB(object):
-
     def __init__(self, config):
         self._image_ids = []
         self.image_info = []
@@ -76,10 +77,13 @@ class IMDB(object):
 
     # 加载图片
     def load_image(self, image_id):
-        image = skimage.io.imread(self.image_info[image_id]['path'])
+        oid = self.image_info[image_id]['id']
+        path = self.image_info[image_id]['path']
+        name = path.split('/')[-1].split('.')[0].split('_')[-1]
+        image = skimage.io.imread(path)
         if image.ndim != 3:
             image = skimage.color.gray2rgb(image)
-        return image
+        return image, oid
 
     # 加载掩膜
     def load_mask(self, image_id):
@@ -93,7 +97,7 @@ class IMDB(object):
         return mask, class_ids
 
     # 加载bbox
-    def load_bbox(self, image_id, box_format):
+    def load_bbox(self, image_id, box_format='y1x1y2x2'):
         """
         bboxs: np.array([counts, (y1, x1, y2, x2)])
         """
@@ -109,7 +113,7 @@ class IMDB(object):
 
         去均值应该在缩放之前，否则缩放时的0填充会被均值占掉，相当于填充区域未去均值.
         """
-        image = self.load_image(image_id)
+        image, name = self.load_image(image_id)
         mask, class_ids = self.load_mask(image_id)
         shape = image.shape
 
@@ -124,6 +128,8 @@ class IMDB(object):
             max_dim=config.IMAGE_MAX_DIM,
             padding=config.IMAGE_PADDING)
         mask = self.resize_mask(mask, scale, padding)
+
+        # cv2.imshow('images', image)
 
         # Flip transform, Random horizontal flips.
         if augment and random.randint(0, 2):
@@ -151,28 +157,43 @@ class IMDB(object):
             mask = self.minimize_mask(bbox, mask, config.MINI_MASK_SHAPE)
 
         # Image meta data
-        image_meta = self.compose_image_meta(image_id, shape, window, active_class_ids)
+        image_meta = self.compose_image_meta(image_id, shape, window, active_class_ids, name)
 
         return image, image_meta, class_ids, bbox, mask
 
     # 为单张图片加载 gt_class_ids gt_bbox
-    def load_image_gtbbox(self, image_id, config, rgbmean=True, augment=False, box_format='y1x1y2x2'):
+    def load_image_gtbbox(self, image_id, config, rgbmean=True, augment=False, chw=True, box_format='y1x1y2x2'):
         # bboxes: [num_instances, (y1, x1, y2, x2)]
-        image = self.load_image(image_id)
+
+        # Load image & info
+        image, name = self.load_image(image_id)
         bboxes, class_ids = self.load_bbox(image_id, box_format)
         shape = image.shape
-        if rgbmean:
-            image = self.mold_image(image, config.MEAN_PIXEL)
+
+        # Resize transform
         image, window, scale, padding = self.resize_image(
             image,
             min_dim=config.IMAGE_MIN_DIM,
             max_dim=config.IMAGE_MAX_DIM,
             padding=config.IMAGE_PADDING)
+
         bboxes = self.resize_bbox(bboxes, scale, padding)
-        # Random horizontal flips.
+
+        # RGB mean transform
+        if rgbmean:
+            image = self.mold_image(image, config.MEAN_PIXEL)
+
+        # cv2.imshow('images', image)
+        # cv2.waitKey(300)
+
+        # Flib transform.
         if augment and random.randint(0, 2):
             image = np.fliplr(image)
             bboxes = np.fliplr(bboxes)
+
+        # CWH transform
+        if chw:
+            image = np.transpose(image, axes=(2, 0, 1))
 
         # Active classes
         # Different datasets have different classes, so track the
@@ -181,7 +202,7 @@ class IMDB(object):
         active_class_ids[class_ids] = 1
 
         # Image meta data
-        image_meta = self.compose_image_meta(image_id, shape, window, active_class_ids)
+        image_meta = self.compose_image_meta(image_id, shape, window, active_class_ids, name)
 
         return image, image_meta, class_ids, bboxes
 
@@ -268,14 +289,10 @@ class IMDB(object):
                     self.source_class_ids[source].append(info['id'])
 
     # 数据生成器 generator
-    def generator(self, config, batch_size=None, shuffle=None, augment=None):
+    def generator(self, config, batch_size=None, shuffle=None, augment=None, rgbmean=True, chw=True,
+                  data_label=True, format='ndarry'):
         """
         参数自定义传入，或从config传入，train和val时的参数可能不相同
-        :param config:
-        :param batch_size:
-        :param shuffle:
-        :param augment:
-        :return:
         """
         batch_size = config.BATCH_SIZE if batch_size is None else batch_size
         shuffle = config.TRAIN_VAL_SHUFFLE if shuffle is None else shuffle
@@ -300,8 +317,10 @@ class IMDB(object):
 
                 # 获取GT box 和 mask
                 image_id = image_ids[image_index]
+
                 image, image_meta, gt_class_ids, gt_boxes, gt_masks = \
-                    self.load_image_gt(image_id, config, rgbmean=True, augment=augment, chw=True)
+                    self.load_image_gt(image_id, config, rgbmean=rgbmean, augment=augment, chw=chw)
+                # cv2.imshow('images', image.transpose(1, 2, 0))
 
                 # 跳过没有实例的图像。这种情况适用于：
                 # 假设所有类的一个子集上训练，但某图片中的实例类都不在此子集中，则跳过此图片。
@@ -312,14 +331,10 @@ class IMDB(object):
                 if b == 0:
                     batch_images = np.zeros((batch_size,) + image.shape, dtype=np.float32)
                     batch_image_meta = np.zeros((batch_size,) + image_meta.shape, dtype=image_meta.dtype)
-                    batch_gt_class_ids = np.zeros((batch_size,) + config.MAX_GT_INSTANCES, dtype=np.int32)
-                    batch_gt_boxes = np.zeros((batch_size,) + config.MAX_GT_INSTANCES, dtype=np.int32)
-                    if config.USE_MINI_MASK:
-                        batch_gt_masks = np.zeros((batch_size, config.MINI_MASK_SHAPE[0], config.MINI_MASK_SHAPE[1],
-                                                   config.MAX_GT_INSTANCES))
-                    else:
-                        batch_gt_masks = np.zeros(
-                            (batch_size, image.shape[0], image.shape[1], config.MAX_GT_INSTANCES))
+                    batch_gt_class_ids = np.zeros((batch_size, config.MAX_GT_INSTANCES), dtype=np.int32)
+                    batch_gt_boxes = np.zeros((batch_size, config.MAX_GT_INSTANCES, 4), dtype=np.int32)
+                    batch_gt_masks = np.zeros((batch_size, gt_masks.shape[0], gt_masks.shape[1],
+                                               config.MAX_GT_INSTANCES), dtype=gt_masks.dtype)
 
                 # 限制单张图片上的物体数量
                 if gt_boxes.shape[0] > config.MAX_GT_INSTANCES:
@@ -335,6 +350,17 @@ class IMDB(object):
                 batch_gt_boxes[b, :gt_boxes.shape[0]] = gt_boxes
                 batch_gt_masks[b, :, :, :gt_masks.shape[-1]] = gt_masks
 
+                if format.lower() == 'ndarry':
+                    pass
+                if format.lower() in ['tensor', 'variable']:
+                    batch_images = torch.from_numpy(batch_images)
+                    batch_image_meta = torch.from_numpy(batch_image_meta)
+                    batch_gt_class_ids = torch.from_numpy(batch_gt_class_ids)
+                    batch_gt_boxes = torch.from_numpy(batch_gt_boxes)
+                    batch_gt_masks = torch.from_numpy(batch_gt_masks)
+                if format.lower() == 'variable':
+                    raise NotImplementedError
+
                 b += 1
 
                 # 直到装满一个batchSize, 则yield返回一个迭代器
@@ -342,7 +368,11 @@ class IMDB(object):
                 if b >= batch_size:
                     inputs = [batch_images, batch_image_meta, batch_gt_class_ids, batch_gt_boxes, batch_gt_masks]
                     outputs = []
-                    yield inputs, outputs
+                    if data_label:
+                        # keras_model.fit_generator() need this format!
+                        yield inputs, outputs
+                    else:
+                        yield inputs
                     # start a new batch
                     b = 0
 
@@ -355,7 +385,7 @@ class IMDB(object):
                 logging.exception("Error processing image {}".format(self.image_info[image_id]))
                 error_count += 1
                 if error_count >= 1:
-                    raise Warning('错误图片数量超过了1张!')
+                    raise Warning('错误图片数量超过了5张!')
 
     ############################################################
     #  Data Formatting  数据格式化
@@ -366,7 +396,7 @@ class IMDB(object):
     ############################################################
 
     @staticmethod
-    def compose_image_meta(image_id, image_shape, window, active_class_ids):
+    def compose_image_meta(image_id, image_shape, window, active_class_ids, name=0):
         """Takes attributes of an image and puts them in one 1D array. Use
         parse_image_meta() to parse the values back.
         将一张图片的信息放进一个1D数组中
@@ -378,11 +408,13 @@ class IMDB(object):
         active_class_ids: List of class_ids available in the dataset from which
             the image came. Useful if training on images from multiple datasets
             where not all classes are present in all datasets.
+        oid: image id in originale dateset
         """
         meta = np.array(
             [image_id] +  # size=1
             list(image_shape) +  # size=3
             list(window) +  # size=4 (y1, x1, y2, x2) in image cooredinates
+            [name] +      # size=1
             list(active_class_ids)  # size=num_classes
         )
         return meta
@@ -397,8 +429,9 @@ class IMDB(object):
         image_id = meta[:, 0]
         image_shape = meta[:, 1:4]
         window = meta[:, 4:8]  # (y1, x1, y2, x2) window of image in in pixels
-        active_class_ids = meta[:, 8:]
-        return image_id, image_shape, window, active_class_ids
+        path = meta[8]
+        active_class_ids = meta[:, 9:]
+        return image_id, image_shape, window, active_class_ids, path
 
     @staticmethod
     def parse_image_meta_graph(meta):
@@ -410,8 +443,9 @@ class IMDB(object):
         image_id = meta[:, 0]
         image_shape = meta[:, 1:4]
         window = meta[:, 4:8]
-        active_class_ids = meta[:, 8:]
-        return [image_id, image_shape, window, active_class_ids]
+        path = meta[8]
+        active_class_ids = meta[:, 9:]
+        return [image_id, image_shape, window, active_class_ids, path]
 
     @staticmethod
     def mold_image(images, rbg_mean):
@@ -510,7 +544,7 @@ class IMDB(object):
                 [(top, bottom), (left, right), (0, 0)]
         """
         h, w = mask.shape[:2]
-        mask = scipy.ndimage.zoom(mask, zoom=[scale, scale, 1], order=0)  # 最近邻插值
+        mask = zoom(mask, zoom=[scale, scale, 1], order=0)  # 最近邻插值
         mask = np.pad(mask, padding, mode='constant', constant_values=0)
         return mask
 
@@ -608,3 +642,98 @@ class IMDB(object):
                 print('No mask for this instance....@extract_bboxes()')
             boxes[i] = np.array([y1, x1, y2, x2])
         return boxes.astype(np.int32)
+
+    # 数据生成器 generator
+    def generator_box(self, config, batch_size=None, shuffle=None, augment=None, rgbmean=True, chw=True,
+                      data_label=True, format='ndarry'):
+        """
+        参数自定义传入，或从config传入，train和val时的参数可能不相同
+        """
+        batch_size = config.BATCH_SIZE if batch_size is None else batch_size
+        shuffle = config.TRAIN_VAL_SHUFFLE if shuffle is None else shuffle
+        augment = config.TRAIN_VAL_AUGEMNT if augment is None else augment
+        assert isinstance(batch_size, int) and batch_size >= 1, 'batch_size必须是正整数！'
+        assert isinstance(shuffle, bool) and isinstance(augment, bool), 'shuffle和augment必须是布尔值！'
+
+        image_ids = np.copy(self.image_ids)
+        image_index = -1
+        b = 0  # batch item index
+        error_count = 0
+
+        while True:
+            try:
+                # 逐张装填图片
+                # 渐增image_index
+                image_index = (image_index + 1) % len(image_ids)
+
+                # 初始时随机排序
+                if shuffle and image_index == 0:
+                    np.random.shuffle(image_ids)
+
+                # 获取GT box 和 mask
+                image_id = image_ids[image_index]
+
+                image, image_meta, gt_class_ids, gt_boxes = \
+                    self.load_image_gtbbox(image_id, config, rgbmean=rgbmean, augment=augment, chw=chw,
+                                           box_format='yxhw')
+                # cv2.imshow('images', image.transpose(1, 2, 0))
+
+                # 跳过没有实例的图像。这种情况适用于：
+                # 假设所有类的一个子集上训练，但某图片中的实例类都不在此子集中，则跳过此图片。
+                if not np.any(gt_class_ids > 0):
+                    continue
+
+                # 初始化Batch数组
+                if b == 0:
+                    batch_images = np.zeros((batch_size,) + image.shape, dtype=np.float32)
+                    batch_image_meta = np.zeros((batch_size,) + image_meta.shape, dtype=image_meta.dtype)
+                    batch_gt_class_ids = np.zeros((batch_size, config.MAX_GT_INSTANCES), dtype=np.int32)
+                    batch_gt_boxes = np.zeros((batch_size, config.MAX_GT_INSTANCES, 4), dtype=np.int32)
+
+                # 限制单张图片上的物体数量
+                if gt_boxes.shape[0] > config.MAX_GT_INSTANCES:
+                    ids = np.random.choice(np.arange(gt_boxes.shape[0]), config.MAX_GT_INSTANCES, replace=False)
+                    gt_class_ids = gt_class_ids[ids]
+                    gt_boxes = gt_boxes[ids]
+
+                # 将数据装入batch数组中 数量不足的部分全为0
+                batch_images[b] = image
+                batch_image_meta[b] = image_meta
+                batch_gt_class_ids[b, :gt_class_ids.shape[0]] = gt_class_ids
+                batch_gt_boxes[b, :gt_boxes.shape[0]] = gt_boxes
+
+                if format.lower() == 'ndarry':
+                    pass
+                if format.lower() in ['tensor', 'variable']:
+                    batch_images = torch.from_numpy(batch_images)
+                    batch_image_meta = torch.from_numpy(batch_image_meta)
+                    batch_gt_class_ids = torch.from_numpy(batch_gt_class_ids)
+                    batch_gt_boxes = torch.from_numpy(batch_gt_boxes)
+                if format.lower() == 'variable':
+                    raise NotImplementedError
+
+                b += 1
+
+                # 直到装满一个batchSize, 则yield返回一个迭代器
+                # Batch full?  batchSize = GPU_COUNT*IMAGES_PER_GPU
+                if b >= batch_size:
+                    inputs = [batch_images, batch_image_meta, batch_gt_class_ids, batch_gt_boxes]
+                    outputs = []
+                    if data_label:
+                        # keras_model.fit_generator() need this format!
+                        yield inputs, outputs
+                    else:
+                        yield inputs
+                    # start a new batch
+                    b = 0
+
+            except GeneratorExit:
+                raise Warning('数据生成器异常！')
+            except KeyboardInterrupt:
+                raise Warning('键盘终止！')
+            except:
+                # Log it and skip the image 其他异常
+                logging.exception("Error processing image {}".format(self.image_info[image_id]))
+                error_count += 1
+                if error_count >= 1:
+                    raise Warning('错误图片数量超过了5张!')

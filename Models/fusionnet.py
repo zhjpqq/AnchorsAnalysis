@@ -18,6 +18,8 @@ def fusionnet(method, levels, stages, indepth, outdepth, strides, shapes):
     :param stages: which to choose in [C1, C2, C3, C4, C5, C6]
     :return:
     """
+    if not isinstance(stages, (list, tuple)):
+        stages = [stages]
     stages = [int(s[1]) - 1 for s in stages]
     if method == 'fpn':
         # [P2,P3,P4,P5,P6], P6 is upsampled form P5

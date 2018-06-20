@@ -6,6 +6,7 @@ __author__ = 'ooo'
 import os
 import sys
 import math
+import time
 import cv2
 import numpy as np
 import pylab
@@ -27,7 +28,7 @@ curr_dir = os.getcwd()
 root_dir = os.path.dirname(curr_dir)
 exp_dir = os.path.join(root_dir, 'Experiments', 'coco_exp')
 
-backbone_dir = os.path.join(root_dir, 'Backbones')
+backbone_dir = '/data/zhangjp/HRCNN/Backbones'
 backbone_name = 'resnet50-19c8e357.pth'
 
 data_dir = '/data/dataset/MSCOCO/data'
@@ -39,20 +40,24 @@ config.EXP_DIR = exp_dir
 config.BACKBONE_ARCH = 'resnet50'
 config.BACKBONE_DIR = backbone_dir
 config.BACKBONE_NAME = backbone_name
+config.BACKBONE_STAGES = ['C0', 'C1', 'C2', 'C3', 'C4', 'C5', 'C6'][0:1]
+config.ANCHOR_STAGE = 0
+config.ANCHOR_METHOD = ['uniform', 'edges', 'hot', 'fpn'][1]
+config.ANCHORS_PER_IMAGE = 13000
 
 # 构造coco数据集
 dataset_train = CocoDataset(config=config)
-dataset_train.load_coco(data_dir=data_dir,
-                        subset='train',
-                        year=data_year,
-                        return_coco=True,
-                        auto_download=False)
-dataset_train.load_coco(data_dir=data_dir,
-                        subset='valminusminival',
-                        year=data_year,
-                        return_coco=True,
-                        auto_download=False)
-dataset_train.prepare()
+# dataset_train.load_coco(data_dir=data_dir,
+#                         subset='train',
+#                         year=data_year,
+#                         return_coco=True,
+#                         auto_download=False)
+# dataset_train.load_coco(data_dir=data_dir,
+#                         subset='valminusminival',
+#                         year=data_year,
+#                         return_coco=True,
+#                         auto_download=False)
+# dataset_train.prepare()
 
 dataset_val = CocoDataset(config=config)
 dataset_val.load_coco(data_dir=data_dir,
@@ -63,8 +68,13 @@ dataset_val.load_coco(data_dir=data_dir,
 dataset_val.prepare()
 
 # data iterator # not generator!
-trainset_iter = DataLoader(dataset_train, batch_size=1, shuffle=True, num_workers=4)
-valset_iter = DataLoader(dataset_val, batch_size=1, shuffle=True, num_workers=4)
+# trainset_iter = DataLoader(dataset_train, batch_size=1, shuffle=True, num_workers=4)
+# valset_iter = DataLoader(dataset_val, batch_size=1, shuffle=True, num_workers=4)
+
+trainset_iter = dataset_train.generator_box(config, batch_size=1, shuffle=False, augment=False, format='Tensor',
+                                            data_label=False)
+valset_iter = dataset_val.generator_box(config, batch_size=1, shuffle=True, augment=False, format='Tensor',
+                                        data_label=False)
 
 # 构造网络模型
 model = backbone(arch='resnet50', pretrained=True, model_dir=backbone_dir, model_name=backbone_name)
@@ -77,40 +87,49 @@ fusion = fusionnet(method=config.FUSION_METHOD,
                    stages=config.BACKBONE_STAGES)
 model.eval()
 fusion.eval()
-
-dataset_iter = [trainset_iter, valset_iter][0]
-image_nums = dataset_iter.dataset.image_nums
-idx = 0
-stop_idx = 500
-
-# 生成锚点
-counts = 500
+model.cuda()
 
 # 采样命中率PDF
-bin_width = 1
-bin_size = 10
-bin_min = 0
-bin_max = bin_min + bin_width * bin_size
-point_arrs = np.zeros([bin_size, 2]).astype(np.float32)
-point_arrs[:, 0] = np.arange(bin_min, bin_max, step=bin_width)
+best_match_dist = []
 
-# 采样效率pdf
-hotok_arrs = np.zeros(stop_idx).astype(np.float32)
+# 采样效率PDF
+hitok_rate = []
+gtbox_nums = []
+anchor_nums = config.ANCHORS_PER_IMAGE
 
+#
+dataset_iter = [trainset_iter, valset_iter][1]
+image_nums = [dataset_train.image_nums, dataset_val.image_nums][1]
+idx = 0
+stop_idx = image_nums
+
+start = time.time()
 for inputs in dataset_iter:
     #  Wrap all Tensor in Variable
     images = Variable(inputs[0]).cuda()
-    image_metas = inputs[1].numpy()
-    gt_class_ids = Variable(inputs[2]).cuda()
-    gt_boxes = Variable(inputs[3]).cuda()  # [y, x, h, w]
+    image_metas = inputs[1][0].numpy()
+    gt_class_ids = Variable(inputs[2][0]).cuda()
+    gt_boxes = Variable(inputs[3][0]).cuda()  # [y, x, h, w]
+
+    if 0:
+        image = images[0].data.permute(1, 2, 0).cpu().numpy()
+        image = CocoDataset.unmold_image(image, config.MEAN_PIXEL)
+        cv2.imshow('images', image)
 
     # [C0, C1, C2, C3, C4, C5, C6]
-    feature_maps = model(images)
+    feature_maps = model(images, stages=config.BACKBONE_STAGES)
+
+    if 0:
+        image = feature_maps[0][0].data.permute(1, 2, 0).cpu().numpy()
+        image = CocoDataset.unmold_image(image, config.MEAN_PIXEL)
+        print('image.shape', image.shape)
+        cv2.imshow('images', image)
 
     # [P2, P3, P4, P5, P6]
     # feature_maps = fusion(feature_maps[1:])
 
-    centers = generate_centers(feature_maps, counts, image_meta=image_metas, method='uniform')
+    centers = generate_centers(feature_maps, config, image_meta=image_metas, method=config.ANCHOR_METHOD)
+    feature_maps, images = None, None
 
     # [N, K, (dist)]
     distance = compute_distance(centers, gt_boxes)
@@ -119,22 +138,51 @@ for inputs in dataset_iter:
     # matches = compute_matches(distance, threshold=None)
 
     # 计算命中率PDF
-    matches = compute_matches(distance, threshold=None)
-    point_arrs = compute_histogram(point_arrs, matches)
+    matches = compute_matches(distance, threshold=None, verbose=0)
+    best_match_dist.extend(matches)
 
     # 计算采样效率曲线
-    hitok = compute_matches(distance, threshold=4)
-    hotok_arrs[idx] = hitok
+    hitok, gtbox = compute_matches(distance, threshold=5, verbose=0)
+    hitok_rate.append(hitok)
+    gtbox_nums.append(gtbox)
 
     if idx < stop_idx:
         idx += 1
+        print('next batch, idx is %s/%s, %0.3f' % (idx, stop_idx, idx / stop_idx))
     else:
         break
 
-print('喵，喵，喵，喵 ....')
-fig = plt.figure()
-ax1 = fig.add_subplot(2, 1, 1)
-ax2 = fig.add_subplot(2, 1, 2)
-ax1.plot(point_arrs[:, 0], point_arrs[:, 1])
-ax2.hist(hotok_arrs, bins=20, normed=False)
+timeit = np.round((time.time() - start) / 60, decimals=4)
+print('喵，喵，喵，喵 .... %s 分 ' % timeit)
+
+best_match_dist = np.array(best_match_dist, dtype=np.float32)
+hitok_rate = np.array(hitok_rate, dtype=np.float32)
+gtbox_nums = np.array(gtbox_nums, dtype=np.float32)
+hitok_xiaolv = hitok_rate / anchor_nums
+
+gtbox_total = np.sum(gtbox_nums)
+images_total = hitok_rate.shape[0]
+
+hitok_mean = np.mean(hitok_rate)
+best_match_mean = np.mean(best_match_dist)
+
+print('total images: %s,  total gtbox: %s, best-match-dist-mean: %s, hitok-rate-mean: %s'
+      % (images_total, gtbox_total, best_match_mean, hitok_mean))
+
+fig1 = plt.figure()
+ax11 = fig1.add_subplot(2, 1, 1)
+ax12 = fig1.add_subplot(2, 1, 2)
+ax11.hist(best_match_dist, bins=200, range=(0, 60), normed=False)
+ax12.hist(best_match_dist, bins=200, range=(0, 60), normed=True)
+ax11.set_title('data: %s, method: %s, nums: %s, dist-mean: %s' % (
+                'val', config.ANCHOR_METHOD, config.ANCHORS_PER_IMAGE, best_match_mean))
+# fig1.show()
+
+fig2 = plt.figure()
+ax21 = fig2.add_subplot(2, 1, 1)
+ax22 = fig2.add_subplot(2, 1, 2)
+ax21.hist(hitok_rate, bins=20, normed=False)  # (1-0)/20 = 0.05
+ax22.hist(gtbox_nums, bins=20, normed=True)
+ax21.set_title('hitok rate mean : %s' % hitok_mean)
+
 plt.show()

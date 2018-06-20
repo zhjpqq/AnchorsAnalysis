@@ -517,7 +517,7 @@ class HotRCNN(nn.Module):
             # Build image_meta
             image_meta = IMDB.compose_image_meta(
                 i, image.shape, window,
-                np.zeros([self.config.CLASSES_NUMS], dtype=np.int32))
+                np.zeros([self.config.CLASSES_NUMS], dtype=np.int32), name=-1)
             # Append
             molded_images.append(molded_image)
             image_metas.append(image_meta)

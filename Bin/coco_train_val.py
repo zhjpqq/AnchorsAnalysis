@@ -75,7 +75,7 @@ def evaluate_coco(model, dataset, coco, eval_type="bbox", limit=0, image_ids=Non
     results = []
     for i, image_id in enumerate(image_ids):
         # Load image
-        image = CocoDataset.load_image(image_id)
+        image, name = CocoDataset.load_image(image_id)
 
         # Run detection, 运行检测, 只送入了一张图片[image], 所以检测结果也是一个result=[result][0]
         t = time.time()

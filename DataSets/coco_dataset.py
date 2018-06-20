@@ -30,12 +30,13 @@ from pycocotools import mask as maskUtils
 
 
 class CocoDataset(IMDB, Dataset):
-
     def __getitem__(self, image_index):
         image_id = self.image_ids[image_index]
         image, image_meta, gt_class_ids, gt_boxes = \
-            self.load_image_gtbbox(image_id=image_id, config=self.config,
+            self.load_image_gtbbox(image_id=image_id, config=self.config, chw=True,
                                    rgbmean=True, augment=False, box_format='yxhw')
+
+        cv2.imshow('images', image)
 
         # 去空值
         if not np.any(gt_class_ids > 0):
@@ -223,7 +224,7 @@ class CocoDataset(IMDB, Dataset):
             if class_id:
                 x1, y1, w, h = annotation['bbox']
                 if x1 < 0 or y1 < 0 or h < 1 or w < 1 or annotation['area'] < 0:
-                    print('warning: bbox value error... todo???')
+                    print('warning: bbox value error...@load_bbox() todo???')
                     continue
                 if box_format == 'y1x1y2x2':
                     # x2, y2 should not in bbox @ cocoapi/loadRes()
@@ -232,7 +233,7 @@ class CocoDataset(IMDB, Dataset):
                 elif box_format == 'y1x1hw':
                     instance_bboxes.append(np.array([y1, x1, h, w]))
                 elif box_format == 'yxhw':
-                    ctr_y, ctr_x = y1 + 0.5*h, x1 + 0.5*w
+                    ctr_y, ctr_x = y1 + 0.5 * h, x1 + 0.5 * w
                     instance_bboxes.append(np.array([ctr_y, ctr_x, h, w]))
                 class_ids.append(class_id)
 

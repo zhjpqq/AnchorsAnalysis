@@ -154,7 +154,7 @@ class Config(object):
     # scale is respect to original image shape
 
     # levels=1: 1000, levels>1: (16*16)*256 > 1000
-    ANCHORS_PER_IMAGE = 16*16
+    ANCHORS_PER_IMAGE = 2000
 
     ANCHOR_SCALES = [512, 256, 128, 64, 32]
 
@@ -302,6 +302,8 @@ class CocoConfig(Config):
     IMAGES_PER_GPU = 1
     GPU_COUNT = 2
     CLASSES_NUMS = 1 + 90
+    IMAGE_MIN_DIM = 1024
+    IMAGE_MAX_DIM = 1024
 
 
 class ShapesConfig(Config):
