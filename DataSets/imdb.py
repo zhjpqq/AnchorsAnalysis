@@ -79,11 +79,11 @@ class IMDB(object):
     def load_image(self, image_id):
         oid = self.image_info[image_id]['id']
         path = self.image_info[image_id]['path']
-        name = path.split('/')[-1].split('.')[0].split('_')[-1]
+        name = path.split('/')[-1]  # .split('.')[0].split('_')[-1]
         image = skimage.io.imread(path)
         if image.ndim != 3:
             image = skimage.color.gray2rgb(image)
-        return image, oid
+        return image, name
 
     # 加载掩膜
     def load_mask(self, image_id):
@@ -250,7 +250,7 @@ class IMDB(object):
         在子类中继承实现
         返回一个指向图片信息的link，用于查看和调试图片
         """
-        return ''
+        raise NotImplementedError
 
     # 准备图片，以用于训练或测试，dict → list
     def prepare(self, class_map=None):
@@ -354,7 +354,6 @@ class IMDB(object):
                     pass
                 if format.lower() in ['tensor', 'variable']:
                     batch_images = torch.from_numpy(batch_images)
-                    batch_image_meta = torch.from_numpy(batch_image_meta)
                     batch_gt_class_ids = torch.from_numpy(batch_gt_class_ids)
                     batch_gt_boxes = torch.from_numpy(batch_gt_boxes)
                     batch_gt_masks = torch.from_numpy(batch_gt_masks)
@@ -396,7 +395,7 @@ class IMDB(object):
     ############################################################
 
     @staticmethod
-    def compose_image_meta(image_id, image_shape, window, active_class_ids, name=0):
+    def compose_image_meta(image_id, image_shape, window, active_class_ids, name='image_name'):
         """Takes attributes of an image and puts them in one 1D array. Use
         parse_image_meta() to parse the values back.
         将一张图片的信息放进一个1D数组中
@@ -409,6 +408,7 @@ class IMDB(object):
             the image came. Useful if training on images from multiple datasets
             where not all classes are present in all datasets.
         oid: image id in originale dateset
+        name: image original original name
         """
         meta = np.array(
             [image_id] +  # size=1
@@ -429,9 +429,9 @@ class IMDB(object):
         image_id = meta[:, 0]
         image_shape = meta[:, 1:4]
         window = meta[:, 4:8]  # (y1, x1, y2, x2) window of image in in pixels
-        path = meta[8]
+        name = meta[8]
         active_class_ids = meta[:, 9:]
-        return image_id, image_shape, window, active_class_ids, path
+        return image_id, image_shape, window, active_class_ids, name
 
     @staticmethod
     def parse_image_meta_graph(meta):
@@ -443,9 +443,9 @@ class IMDB(object):
         image_id = meta[:, 0]
         image_shape = meta[:, 1:4]
         window = meta[:, 4:8]
-        path = meta[8]
+        name = meta[8]
         active_class_ids = meta[:, 9:]
-        return [image_id, image_shape, window, active_class_ids, path]
+        return [image_id, image_shape, window, active_class_ids, name]
 
     @staticmethod
     def mold_image(images, rbg_mean):
@@ -706,7 +706,6 @@ class IMDB(object):
                     pass
                 if format.lower() in ['tensor', 'variable']:
                     batch_images = torch.from_numpy(batch_images)
-                    batch_image_meta = torch.from_numpy(batch_image_meta)
                     batch_gt_class_ids = torch.from_numpy(batch_gt_class_ids)
                     batch_gt_boxes = torch.from_numpy(batch_gt_boxes)
                 if format.lower() == 'variable':

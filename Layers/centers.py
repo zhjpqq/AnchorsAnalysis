@@ -11,6 +11,7 @@ import torch
 from torch.autograd import Variable
 from Utils import utils
 from DataSets.imdb import IMDB
+from DataSets.coco_dataset import CocoDataset
 
 
 def generate_centers(fmaps, config, image_meta, method='uniform'):
@@ -30,7 +31,7 @@ def generate_centers(fmaps, config, image_meta, method='uniform'):
         return fpn_centers(fmaps, config, image_meta)
 
 
-def uniform_centers(fmap, config, image_meta, anchor_stride=1):
+def uniform_centers(fmap, config, image_meta, anchor_stride=7):
     # fmap [b, c, h, w]
     fmap = fmap.data[0, :, :, :]
     h, w = fmap.shape[1:]
@@ -58,13 +59,14 @@ def edges_centers(fmap, config, image_meta):
     fmap = fmap.data[0, :, :, :].permute(1, 2, 0).cpu().numpy()
     image_shape = config.IMAGE_SHAPE
     fstride = image_shape[0:2] / np.array(fmap.shape[0:2])
-    window = image_meta[4:8]  # (y1, x1, y2, x2) in image cooredinates
+    window = image_meta[4:8].astype(np.int32)  # (y1, x1, y2, x2) in image cooredinates
     counts = config.ANCHORS_PER_IMAGE
 
     fmap = IMDB.unmold_image(fmap, rbg_mean=config.MEAN_PIXEL)
     fmap = cv2.cvtColor(fmap, cv2.COLOR_BGR2GRAY)
     # cv2.imshow("fmap", fmap)
-    edges = cv2.Canny(fmap, 60, 200)
+    # [100, 200] [60,200]/~2W [30 100]/3W-4W [10 80]/5W-6W [10 60]/7W-30W  [10 30]/50W
+    edges = cv2.Canny(fmap, 10, 20)
     # cv2.imshow("edges", edges)
     rows, cols = np.where(edges)
     rows_in_win = np.logical_and(rows > window[0] + 1, rows < window[2] - 1)
@@ -78,7 +80,7 @@ def edges_centers(fmap, config, image_meta):
         index = np.random.choice(index, counts, replace=False)
         centers = centers[index, :]
     else:
-        print('锚点数量不足-----------id: %s >>> %s' % (image_meta[8], centers.shape[0]))
+        print('锚点数量不足---->>> url: %s >>> nums: %s' % (image_meta[0], centers.shape[0]))
         # raise Warning('锚点数量不足, %s' % centers.shape[0])
         if centers.shape[0] == 0:
             print('convert to uniform sampling ... ')

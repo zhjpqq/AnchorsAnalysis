@@ -62,20 +62,36 @@ class ResNet(nn.Module):
         # BACKBONE_CHANNELS = [3, 64, 256, 512, 1024, 2048, 2048]
         # BACKBONE_STRIDES = [1, 2, 4, 8, 16, 32, 39.38]
         C0 = x
+        if stages == ['C0']:
+            return [C0]
+
         x = self.conv1(x)
         x = self.bn1(x)
         x = self.relu(x)
         C1 = x
+        if stages == ['C0', 'C1']:
+            return [C0, C1]
+
         x = self.maxpool(x)
         # C1 = x
         x = self.layer1(x)
         C2 = x
+        if stages == ['C0', 'C1', 'C2']:
+            return [C0, C1, C2]
+
         x = self.layer2(x)
         C3 = x
+        if stages == ['C0', 'C1', 'C2', 'C3']:
+            return [C0, C1, C2, C3]
+
         x = self.layer3(x)
         C4 = x
+        if stages == ['C0', 'C1', 'C2', 'C3', 'C4']:
+            return [C0, C1, C2, C3, C4]
+
         x = self.layer4(x)
         C5 = x
+
         # 在检测算法中不需要计算全连接层的输出x
         x = self.avgpool(x)
         C6 = x

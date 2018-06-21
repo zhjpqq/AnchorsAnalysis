@@ -26,7 +26,8 @@ from Layers.centers import generate_centers, compute_distance, compute_matches, 
 # 设定路径
 curr_dir = os.getcwd()
 root_dir = os.path.dirname(curr_dir)
-exp_dir = os.path.join(root_dir, 'Experiments', 'coco_exp')
+exp_dir = os.path.join(root_dir, 'Experiments', 'anchors')
+assert os.path.exists(exp_dir)
 
 backbone_dir = '/data/zhangjp/HRCNN/Backbones'
 backbone_name = 'resnet50-19c8e357.pth'
@@ -37,44 +38,50 @@ data_year = '2014'
 # 配置超参数
 config = CocoConfig()
 config.EXP_DIR = exp_dir
+config.DATASET = ['train', 'val', 'minival', 'valminusminival', ][2]
+
 config.BACKBONE_ARCH = 'resnet50'
 config.BACKBONE_DIR = backbone_dir
 config.BACKBONE_NAME = backbone_name
 config.BACKBONE_STAGES = ['C0', 'C1', 'C2', 'C3', 'C4', 'C5', 'C6'][0:1]
+
 config.ANCHOR_STAGE = 0
 config.ANCHOR_METHOD = ['uniform', 'edges', 'hot', 'fpn'][1]
-config.ANCHORS_PER_IMAGE = 13000
+config.ANCHORS_PER_IMAGE = 20000
 
 # 构造coco数据集
-dataset_train = CocoDataset(config=config)
-# dataset_train.load_coco(data_dir=data_dir,
-#                         subset='train',
-#                         year=data_year,
-#                         return_coco=True,
-#                         auto_download=False)
-# dataset_train.load_coco(data_dir=data_dir,
-#                         subset='valminusminival',
-#                         year=data_year,
-#                         return_coco=True,
-#                         auto_download=False)
-# dataset_train.prepare()
-
-dataset_val = CocoDataset(config=config)
-dataset_val.load_coco(data_dir=data_dir,
-                      subset='minival',
-                      year=data_year,
-                      return_coco=True,
-                      auto_download=False)
-dataset_val.prepare()
+if config.DATASET == 'train':
+    dataset_train = CocoDataset(config=config)
+    dataset_train.load_coco(data_dir=data_dir,
+                            subset='train',
+                            year=data_year,
+                            return_coco=True,
+                            auto_download=False)
+    dataset_train.load_coco(data_dir=data_dir,
+                            subset='valminusminival',
+                            year=data_year,
+                            return_coco=True,
+                            auto_download=False)
+    dataset_train.prepare()
+    dataset = dataset_train
+elif config.DATASET == 'minival':
+    dataset_val = CocoDataset(config=config)
+    dataset_val.load_coco(data_dir=data_dir,
+                          subset='minival',
+                          year=data_year,
+                          return_coco=True,
+                          auto_download=False)
+    dataset_val.prepare()
+    dataset = dataset_val
+else:
+    dataset = None
 
 # data iterator # not generator!
 # trainset_iter = DataLoader(dataset_train, batch_size=1, shuffle=True, num_workers=4)
 # valset_iter = DataLoader(dataset_val, batch_size=1, shuffle=True, num_workers=4)
 
-trainset_iter = dataset_train.generator_box(config, batch_size=1, shuffle=False, augment=False, format='Tensor',
-                                            data_label=False)
-valset_iter = dataset_val.generator_box(config, batch_size=1, shuffle=True, augment=False, format='Tensor',
-                                        data_label=False)
+dataset_iter = dataset.generator_box(config, batch_size=1, shuffle=True, augment=False, format='Tensor',
+                                     data_label=False)
 
 # 构造网络模型
 model = backbone(arch='resnet50', pretrained=True, model_dir=backbone_dir, model_name=backbone_name)
@@ -98,8 +105,7 @@ gtbox_nums = []
 anchor_nums = config.ANCHORS_PER_IMAGE
 
 #
-dataset_iter = [trainset_iter, valset_iter][1]
-image_nums = [dataset_train.image_nums, dataset_val.image_nums][1]
+image_nums = dataset.image_nums
 idx = 0
 stop_idx = image_nums
 
@@ -107,7 +113,7 @@ start = time.time()
 for inputs in dataset_iter:
     #  Wrap all Tensor in Variable
     images = Variable(inputs[0]).cuda()
-    image_metas = inputs[1][0].numpy()
+    image_metas = inputs[1][0]
     gt_class_ids = Variable(inputs[2][0]).cuda()
     gt_boxes = Variable(inputs[3][0]).cuda()  # [y, x, h, w]
 
@@ -148,7 +154,7 @@ for inputs in dataset_iter:
 
     if idx < stop_idx:
         idx += 1
-        print('next batch, idx is %s/%s, %0.3f' % (idx, stop_idx, idx / stop_idx))
+        print('next batch, idx is %s/%s, %0.1f%%' % (idx, stop_idx, idx*100 / stop_idx))
     else:
         break
 
@@ -169,20 +175,25 @@ best_match_mean = np.mean(best_match_dist)
 print('total images: %s,  total gtbox: %s, best-match-dist-mean: %s, hitok-rate-mean: %s'
       % (images_total, gtbox_total, best_match_mean, hitok_mean))
 
-fig1 = plt.figure()
-ax11 = fig1.add_subplot(2, 1, 1)
-ax12 = fig1.add_subplot(2, 1, 2)
+fig = plt.figure()
+ax11 = fig.add_subplot(2, 2, 1)
+ax12 = fig.add_subplot(2, 2, 2)
+ax21 = fig.add_subplot(2, 2, 3)
+ax22 = fig.add_subplot(2, 2, 4)
+
 ax11.hist(best_match_dist, bins=200, range=(0, 60), normed=False)
 ax12.hist(best_match_dist, bins=200, range=(0, 60), normed=True)
 ax11.set_title('data: %s, method: %s, nums: %s, dist-mean: %s' % (
-                'val', config.ANCHOR_METHOD, config.ANCHORS_PER_IMAGE, best_match_mean))
-# fig1.show()
+               'val', config.ANCHOR_METHOD, config.ANCHORS_PER_IMAGE, best_match_mean))
 
-fig2 = plt.figure()
-ax21 = fig2.add_subplot(2, 1, 1)
-ax22 = fig2.add_subplot(2, 1, 2)
 ax21.hist(hitok_rate, bins=20, normed=False)  # (1-0)/20 = 0.05
 ax22.hist(gtbox_nums, bins=20, normed=True)
 ax21.set_title('hitok rate mean : %s' % hitok_mean)
 
 plt.show()
+
+fname = '%s-hitok-%s-%s.png' % (config.ANCHOR_METHOD, config.DATASET, config.ANCHORS_PER_IMAGE)
+filepath = os.path.join(config.EXP_DIR, fname)
+print('file saved at: ', filepath)
+fig.savefig(filename=filepath, format='png', transparent=False, dpi=300, pad_inches=0)
+
