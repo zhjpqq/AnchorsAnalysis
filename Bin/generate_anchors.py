@@ -43,11 +43,11 @@ config.DATASET = ['train', 'val', 'minival', 'valminusminival', ][2]
 config.BACKBONE_ARCH = 'resnet50'
 config.BACKBONE_DIR = backbone_dir
 config.BACKBONE_NAME = backbone_name
-config.BACKBONE_STAGES = ['C0', 'C1', 'C2', 'C3', 'C4', 'C5', 'C6'][0:1]
+config.BACKBONE_STAGES = ['C0', 'C1', 'C2', 'C3', 'C4', 'C5', 'C6'][0:4]
 
-config.ANCHOR_STAGE = 0
-config.ANCHOR_METHOD = ['uniform', 'edges', 'hot', 'fpn'][1]
-config.ANCHORS_PER_IMAGE = 20000
+config.ANCHOR_STAGE = 3
+config.ANCHOR_METHOD = ['uniform', 'edges', 'hot', 'fpn'][2]
+config.ANCHORS_PER_IMAGE = 10000
 
 # 构造coco数据集
 if config.DATASET == 'train':
@@ -61,7 +61,7 @@ if config.DATASET == 'train':
                             subset='valminusminival',
                             year=data_year,
                             return_coco=True,
-                            auto_download=False)
+                            a10000uto_download=False)
     dataset_train.prepare()
     dataset = dataset_train
 elif config.DATASET == 'minival':
@@ -154,7 +154,7 @@ for inputs in dataset_iter:
 
     if idx < stop_idx:
         idx += 1
-        print('next batch, idx is %s/%s, %0.1f%%' % (idx, stop_idx, idx*100 / stop_idx))
+        print('next batch, idx is %s/%s, %0.1f%% done.' % (idx, stop_idx, idx*100 / stop_idx))
     else:
         break
 
@@ -174,6 +174,7 @@ best_match_mean = np.mean(best_match_dist)
 
 print('total images: %s,  total gtbox: %s, best-match-dist-mean: %s, hitok-rate-mean: %s'
       % (images_total, gtbox_total, best_match_mean, hitok_mean))
+
 
 fig = plt.figure()
 ax11 = fig.add_subplot(2, 2, 1)

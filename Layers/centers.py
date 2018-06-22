@@ -24,7 +24,7 @@ def generate_centers(fmaps, config, image_meta, method='uniform'):
         return edges_centers(fmap, config, image_meta)
 
     elif method == 'hot':
-        fmap = fmaps[3]
+        fmap = fmaps[config.ANCHOR_STAGE]
         return hot_centers(fmap, config, image_meta)
 
     elif method == 'fpn':
@@ -106,27 +106,41 @@ def hot_centers(fmap, config, image_meta):
     assert fmap.size(0) == 1, 'batch size should be 1'
     assert fmap.size(2) * fmap.size(3) >= counts, 'need anchors counts >= pixels of fmap :%s & %s'
     fmap = fmap.data[0].cpu().numpy()
-    image_shape = config.IMAGE_SHAPE[1:3]
-    fstride = image_shape / np.array(fmap.shape[2:])
-    window = image_meta[4:8]
+    image_shape = config.IMAGE_SHAPE[0:2]
+    fstride = image_shape / np.array(fmap.shape[1:])
+    window = image_meta[4:8].astype(np.float32)  # y1 x1 y2 x2
+    window /= np.concatenate((fstride, fstride), axis=0)
+    window = np.round(window).astype(np.int32)
 
-    fmap = np.sum(np.abs(fmap - np.mean(np.mean(fmap, axis=1, keepdims=True), axis=2, keepdims=True)), axis=0)
-    # fmap = np.sum(np.abs(fmap), axis=0)
-    kind = np.argsort(fmap.reshape(-1), axis=0)
-    kval = fmap.reshape(-1)[kind[counts]]
+    # fmap = np.sum(np.abs(fmap - np.mean(np.mean(fmap, axis=1, keepdims=True), axis=2, keepdims=True)), axis=0)
+    fmap = np.sum(np.abs(fmap), axis=0)
+
+    rows = np.arange(fmap.shape[0])
+    cols = np.arange(fmap.shape[1])
+    rows_out_win = np.logical_or(rows < window[0], rows > window[2] - 1)
+    cols_out_win = np.logical_or(cols < window[1], cols > window[3] - 1)
+    fmap[rows_out_win, :] = -99
+    fmap[:, cols_out_win] = -99
+
+    kval = np.sort(fmap, axis=None)[::-1][counts]
     rows, cols = np.where(fmap >= kval)
-    rows_in_win = np.logical_and(rows > window[0], rows < window[2])
-    cols_in_win = np.logical_and(cols > window[1], cols < window[3])
-    ctrs_in_win = np.logical_and(rows_in_win, cols_in_win)
     centers = np.stack([rows, cols], axis=1)
-    centers = centers[ctrs_in_win, :]
-    centers *= fstride
+    centers *= fstride.astype(np.int32)
+
     if centers.shape[0] >= counts:
         index = np.arange(centers.shape[0])
         index = np.random.choice(index, counts, replace=False)
         centers = centers[index, :]
     else:
-        raise Exception('锚点数量不足, %s' % centers.shape[0])
+        print('convert to uniform sampling ... $%#%^^*&^*$%#%^^*&^*$%#%^^*&^*(&)$^&$^#$ ')
+        if centers.shape[0] == 0:
+            y = np.arange(0, image_shape[0], 1)
+            x = np.arange(0, image_shape[1], 1)
+            y, x = np.meshgrid(y, x)
+            centers = np.stack([y.reshape(-1), x.reshape(-1)], axis=1)  # N x 2
+            index = np.arange(centers.shape[0])
+            index = np.random.choice(index, counts, replace=False)
+            centers = centers[index, :]
     return centers
 
 
