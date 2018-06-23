@@ -29,8 +29,9 @@ root_dir = os.path.dirname(curr_dir)
 exp_dir = os.path.join(root_dir, 'Experiments', 'anchors')
 assert os.path.exists(exp_dir)
 
-backbone_dir = '/data/zhangjp/HRCNN/Backbones'
-backbone_name = 'resnet50-19c8e357.pth'
+backbone_dir = ['/data/zhangjp/HRCNN/Backbones', '/data/zhangjp/HotAnchorRCNN_PyTorch/Backbones'][0]
+backbone_name = ['resnet50-19c8e357.pth', 'resnet101-5d3b4d8f.pth'][0]
+assert os.access(os.path.join(backbone_dir, backbone_name), os.R_OK)
 
 data_dir = '/data/dataset/MSCOCO/data'
 data_year = '2014'
@@ -43,11 +44,11 @@ config.DATASET = ['train', 'val', 'minival', 'valminusminival', ][2]
 config.BACKBONE_ARCH = 'resnet50'
 config.BACKBONE_DIR = backbone_dir
 config.BACKBONE_NAME = backbone_name
-config.BACKBONE_STAGES = ['C0', 'C1', 'C2', 'C3', 'C4', 'C5', 'C6'][0:4]
+config.BACKBONE_STAGES = ['C0', 'C1', 'C2', 'C3', 'C4', 'C5', 'C6'][0:3]
 
-config.ANCHOR_STAGE = 3
+config.ANCHOR_STAGE = 2
 config.ANCHOR_METHOD = ['uniform', 'edges', 'hot', 'fpn'][2]
-config.ANCHORS_PER_IMAGE = 10000
+config.ANCHORS_PER_IMAGE = 50000
 
 # 构造coco数据集
 if config.DATASET == 'train':
@@ -84,7 +85,7 @@ dataset_iter = dataset.generator_box(config, batch_size=1, shuffle=True, augment
                                      data_label=False)
 
 # 构造网络模型
-model = backbone(arch='resnet50', pretrained=True, model_dir=backbone_dir, model_name=backbone_name)
+model = backbone(arch=config.BACKBONE_ARCH, pretrained=True, model_dir=backbone_dir, model_name=backbone_name)
 fusion = fusionnet(method=config.FUSION_METHOD,
                    levels=config.FUSION_LEVELS,
                    indepth=config.FUSION_CHANNELS_IN,
@@ -95,7 +96,6 @@ fusion = fusionnet(method=config.FUSION_METHOD,
 model.eval()
 fusion.eval()
 model.cuda()
-
 # 采样命中率PDF
 best_match_dist = []
 
@@ -118,6 +118,7 @@ for inputs in dataset_iter:
     gt_boxes = Variable(inputs[3][0]).cuda()  # [y, x, h, w]
 
     if 0:
+        cv2.cvtColor()
         image = images[0].data.permute(1, 2, 0).cpu().numpy()
         image = CocoDataset.unmold_image(image, config.MEAN_PIXEL)
         cv2.imshow('images', image)
@@ -197,4 +198,3 @@ fname = '%s-hitok-%s-%s.png' % (config.ANCHOR_METHOD, config.DATASET, config.ANC
 filepath = os.path.join(config.EXP_DIR, fname)
 print('file saved at: ', filepath)
 fig.savefig(filename=filepath, format='png', transparent=False, dpi=300, pad_inches=0)
-

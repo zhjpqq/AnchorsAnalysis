@@ -37,6 +37,7 @@ def uniform_centers(fmap, config, image_meta, anchor_stride=7):
     h, w = fmap.shape[1:]
     image_shape = config.IMAGE_SHAPE
     counts = config.ANCHORS_PER_IMAGE
+    anchor_stride = np.floor(image_shape[0]/np.sqrt(counts))
 
     fmap_stride = image_shape[1] / h
     y = np.arange(0, h * fmap_stride, anchor_stride)
@@ -117,23 +118,29 @@ def hot_centers(fmap, config, image_meta):
 
     rows = np.arange(fmap.shape[0])
     cols = np.arange(fmap.shape[1])
-    rows_out_win = np.logical_or(rows < window[0], rows > window[2] - 1)
-    cols_out_win = np.logical_or(cols < window[1], cols > window[3] - 1)
+    # points 1000/[0.163 < 0.179 < 0.194]  1.5w[0.761<-<0.777]
+    rows_out_win = np.logical_or(rows < window[0] + 2, rows > window[2] - 2)
+    cols_out_win = np.logical_or(cols < window[1] + 2, cols > window[3] - 2)
     fmap[rows_out_win, :] = -99
     fmap[:, cols_out_win] = -99
 
     kval = np.sort(fmap, axis=None)[::-1][counts]
+    if kval <= -99:
+        kval = 0
+        print('锚点数量不足---- <<< -99 >>> 0')
     rows, cols = np.where(fmap >= kval)
     centers = np.stack([rows, cols], axis=1)
     centers *= fstride.astype(np.int32)
 
     if centers.shape[0] >= counts:
-        index = np.arange(centers.shape[0])
-        index = np.random.choice(index, counts, replace=False)
-        centers = centers[index, :]
+        centers = centers[0:counts, :]
+        # index = np.arange(centers.shape[0])
+        # index = np.random.choice(index, counts, replace=False)
+        # centers = centers[index, :]
     else:
-        print('convert to uniform sampling ... $%#%^^*&^*$%#%^^*&^*$%#%^^*&^*(&)$^&$^#$ ')
+        print('锚点数量不足---->>> url: %s >>> nums: %s' % (image_meta[0], centers.shape[0]))
         if centers.shape[0] == 0:
+            print('convert to uniform sampling ... $%#%^^*&^*$%#%^^*&^*$%#%^^*&^*(&)$^&$^#$ ')
             y = np.arange(0, image_shape[0], 1)
             x = np.arange(0, image_shape[1], 1)
             y, x = np.meshgrid(y, x)
